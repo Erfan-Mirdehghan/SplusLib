@@ -1,3 +1,5 @@
+pypi https://pypi.org/project/spluslib/
+
 # SplusLib
 
 A complete, high-level Python userbot library for **Soroush Plus**, built on a
@@ -29,6 +31,10 @@ LiveKit-based voice/conference calls — all through a simple, consistent API.
 - [For AI assistants reading this repo](#for-ai-assistants-reading-this-repo)
 
 ---
+# Installation 
+```bash
+pip install spluslib
+```
 
 ## What's in this repo
 
