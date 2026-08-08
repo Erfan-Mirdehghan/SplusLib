@@ -974,4 +974,4 @@ except errors.SplusError as e:
 
 ---
 
-*ساخته‌شده برای Unity Lumina / Erfan Mirdehghan.*
+* --Erfan Mirdehghan--*
