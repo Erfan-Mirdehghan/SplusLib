@@ -14,7 +14,7 @@ from ..tl.types import (
     MessageEntityPre, MessageEntityEmail, MessageEntityUrl,
     MessageEntityTextUrl, MessageEntityMentionName,
     MessageEntityUnderline, MessageEntityStrike, MessageEntityBlockquote,
-    MessageEntityCustomEmoji, TypeMessageEntity
+    MessageEntityCustomEmoji, MessageEntitySpoiler, TypeMessageEntity
 )
 
 _log = logging.getLogger(__name__)
@@ -46,6 +46,8 @@ class HTMLToSoroushPlusParser(HTMLParser):
             EntityType = MessageEntityStrike
         elif tag == 'blockquote':
             EntityType = MessageEntityBlockquote
+        elif tag == 'tg-spoiler' or tag == 'spoiler':
+            EntityType = MessageEntitySpoiler
         elif tag == 'code':
             try:
                 # If we're in the middle of a <pre> tag, this <code> tag is
@@ -148,6 +150,7 @@ ENTITY_TO_FORMATTER = {
     MessageEntityUnderline: ('<u>', '</u>'),
     MessageEntityStrike: ('<del>', '</del>'),
     MessageEntityBlockquote: ('<blockquote>', '</blockquote>'),
+    MessageEntitySpoiler: ('<tg-spoiler>', '</tg-spoiler>'),
     MessageEntityPre: lambda e, _: (
         "<pre>\n"
         "    <code class='language-{}'>\n"

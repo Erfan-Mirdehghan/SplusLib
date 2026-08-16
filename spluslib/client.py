@@ -9,7 +9,7 @@ import sys
 import time
 from typing import (
     Optional, Union, List, Dict, Any, Callable, Awaitable, TypeVar,
-    TYPE_CHECKING, overload,
+    TYPE_CHECKING, overload, Literal,
 )
 from ._base import SoroushClient, events as splus_events
 from ._base import errors as splus_errors
@@ -829,6 +829,127 @@ class SplusClient:
         except Exception as e:
             raise errors.translate(e) from e
 
+    # Canonical accepted reason strings -- shown in editor autocomplete
+    # for the `reason` param below (case-insensitive at call time;
+    # snake_case like "child_abuse" also accepted, see _REPORT_REASONS).
+    ReportReason = Literal[
+        'spam', 'violence', 'childAbuse', 'pornography', 'copyright',
+        'fake', 'geoIrrelevant', 'illegalDrugs', 'personalDetails', 'other',
+    ]
+    # Public so you can validate/list options yourself, e.g.:
+    #   if reason not in SplusClient.REPORT_REASONS: ...
+    REPORT_REASONS = (
+        'spam', 'violence', 'childAbuse', 'pornography', 'copyright',
+        'fake', 'geoIrrelevant', 'illegalDrugs', 'personalDetails', 'other',
+    )
+
+    _REPORT_REASONS = {
+        'spam': types.InputReportReasonSpam,
+        'violence': types.InputReportReasonViolence,
+        'childabuse': types.InputReportReasonChildAbuse,
+        'child_abuse': types.InputReportReasonChildAbuse,
+        'pornography': types.InputReportReasonPornography,
+        'copyright': types.InputReportReasonCopyright,
+        'fake': types.InputReportReasonFake,
+        'geoirrelevant': types.InputReportReasonGeoIrrelevant,
+        'geo_irrelevant': types.InputReportReasonGeoIrrelevant,
+        'illegaldrugs': types.InputReportReasonIllegalDrugs,
+        'illegal_drugs': types.InputReportReasonIllegalDrugs,
+        'personaldetails': types.InputReportReasonPersonalDetails,
+        'personal_details': types.InputReportReasonPersonalDetails,
+        'other': types.InputReportReasonOther,
+    }
+
+    def _resolve_report_reason(self, reason: str):
+        try:
+            return self._REPORT_REASONS[reason.strip().lower().replace(' ', '_')]()
+        except (KeyError, AttributeError):
+            raise ValueError(
+                f"Unknown report reason {reason!r}. Valid options: "
+                f"{', '.join(self.REPORT_REASONS)} "
+                f"(case-insensitive; e.g. 'childAbuse' or 'child_abuse' both work)"
+            )
+
+    async def report_message(
+        self,
+        chat_id: Union[int, str],
+        message_ids: Union[int, List[int]],
+        reason: "SplusClient.ReportReason",
+        *,
+        comment: str = "",
+    ) -> bool:
+        """
+        Report one or more messages in a chat to Soroush.
+
+        Args:
+            chat_id: The chat the message(s) are in.
+            message_ids: A single message ID or a list of them.
+            reason: One of "spam", "violence", "childAbuse",
+                "pornography", "copyright", "fake", "geoIrrelevant",
+                "illegalDrugs", "personalDetails", "other" -- see
+                SplusClient.REPORT_REASONS for this list at runtime.
+                Case-insensitive; underscores also accepted (e.g.
+                "child_abuse"). Anything else raises ValueError up
+                front, before any request is sent.
+            comment: Optional extra text explaining the report.
+
+        Returns:
+            True if the report was submitted.
+
+        Example:
+            await bot.report_message(chat_id, msg_id, "spam")
+            await bot.report_message(chat_id, [id1, id2], "fake", comment="duplicate accounts")
+        """
+        try:
+            entity = await self._client.get_input_entity(_norm_chat_id(chat_id))
+            ids = [message_ids] if isinstance(message_ids, int) else list(message_ids)
+            reason_obj = self._resolve_report_reason(reason)
+
+            return bool(await self._client(functions.messages.ReportRequest(
+                peer=entity,
+                id=ids,
+                reason=reason_obj,
+                message=comment,
+            )))
+        except errors.SplusError:
+            raise
+        except Exception as e:
+            raise errors.translate(e) from e
+
+    async def report_user(
+        self,
+        user_id: Union[int, str],
+        reason: "SplusClient.ReportReason",
+        *,
+        comment: str = "",
+    ) -> bool:
+        """
+        Report a user's account (their profile itself, not a specific
+        message -- for that, use report_message).
+
+        Args:
+            user_id: The user to report.
+            reason: Same options as report_message() -- see
+                SplusClient.REPORT_REASONS for the full list.
+            comment: Optional extra text explaining the report.
+
+        Returns:
+            True if the report was submitted.
+        """
+        try:
+            entity = await self._client.get_input_entity(_norm_chat_id(user_id))
+            reason_obj = self._resolve_report_reason(reason)
+
+            return bool(await self._client(functions.account.ReportPeerRequest(
+                peer=entity,
+                reason=reason_obj,
+                message=comment,
+            )))
+        except errors.SplusError:
+            raise
+        except Exception as e:
+            raise errors.translate(e) from e
+
     # ==================== Contact Methods ====================
 
     async def add_contact(
@@ -1117,14 +1238,27 @@ class SplusClient:
         """
         try:
             user_entity = await self._client.get_entity(_norm_chat_id(user_id))
-            input_user = await self._client.get_input_entity(_norm_chat_id(user_id))
+            # IMPORTANT: the server wants InputMessageEntityMentionName's
+            # user_id to be a real types.InputUser (user_id + access_hash),
+            # NOT the types.InputPeerUser that get_input_entity() returns.
+            # Both have .user_id/.access_hash attributes, but they're
+            # different TL constructors (different type tags on the wire)
+            # -- InputMessageEntityMentionName._bytes() serializes whatever
+            # you pass using *its own* constructor ID, so handing it an
+            # InputPeerUser makes the server see a malformed InputUser and
+            # reject the whole SendMessage with a generic BAD_REQUEST.
+            # (The web client's buildMtpMessageEntity does exactly this
+            # conversion explicitly: `new GramJs.InputUser({ userId,
+            # accessHash })`, never passes the InputPeer straight through.)
+            input_peer = await self._client.get_input_entity(_norm_chat_id(user_id))
+            input_user = splus_utils.get_input_user(input_peer)
             mention_text = text or getattr(user_entity, 'first_name', None) or 'user'
             full_text = mention_text + extra_text
 
-            entities = [types.MessageEntityMentionName(
+            entities = [types.InputMessageEntityMentionName(
                 offset=0,
                 length=len(mention_text),
-                user_id=getattr(input_user, 'user_id', getattr(user_entity, 'id', None)),
+                user_id=input_user,
             )]
 
             entity = await self._client.get_input_entity(_norm_chat_id(chat_id))

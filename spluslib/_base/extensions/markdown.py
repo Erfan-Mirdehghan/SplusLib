@@ -11,19 +11,24 @@ from ..tl import TLObject
 from ..tl.types import (
     MessageEntityBold, MessageEntityItalic, MessageEntityCode,
     MessageEntityPre, MessageEntityTextUrl, MessageEntityMentionName,
-    MessageEntityStrike
+    MessageEntityStrike, MessageEntityUnderline, MessageEntitySpoiler,
+    MessageEntityBlockquote, InputMessageEntityMentionName
 )
 
 DEFAULT_DELIMITERS = {
     '**': MessageEntityBold,
     '__': MessageEntityItalic,
+    '--': MessageEntityUnderline,
     '~~': MessageEntityStrike,
+    '||': MessageEntitySpoiler,
+    '>>': MessageEntityBlockquote,
     '`': MessageEntityCode,
     '```': MessageEntityPre
 }
 
 DEFAULT_URL_RE = re.compile(r'\[([^]]*?)\]\(([\s\S]*?)\)')
 DEFAULT_URL_FORMAT = '[{0}]({1})'
+_MENTION_URL_RE = re.compile(r'^tg://user\?id=(\d+)$')
 
 
 def parse(message, delimiters=None, url_re=None):
@@ -121,10 +126,23 @@ def parse(message, delimiters=None, url_re=None):
                     if ent.offset + ent.length > m.start():
                         ent.length -= delim_size
 
-                result.append(MessageEntityTextUrl(
-                    offset=m.start(), length=len(m.group(1)),
-                    url=del_surrogate(m.group(2))
-                ))
+                raw_url = del_surrogate(m.group(2))
+                mention_match = _MENTION_URL_RE.match(raw_url)
+                if mention_match:
+                    # [Name](tg://user?id=123456789) -> mention, resolved
+                    # to an InputUser at send time the same way markdown
+                    # mentions always have been (see messageparse.py's
+                    # _replace_with_mention, which every text send already
+                    # runs when parse_mode is set).
+                    result.append(MessageEntityMentionName(
+                        offset=m.start(), length=len(m.group(1)),
+                        user_id=int(mention_match.group(1)),
+                    ))
+                else:
+                    result.append(MessageEntityTextUrl(
+                        offset=m.start(), length=len(m.group(1)),
+                        url=raw_url
+                    ))
                 i += len(m.group(1))
                 continue
 

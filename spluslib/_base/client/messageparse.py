@@ -63,9 +63,18 @@ class MessageParseMethods:
         or do nothing if it can't be found.
         """
         try:
+            # InputMessageEntityMentionName.user_id must be a real
+            # types.InputUser (own constructor id on the wire), not the
+            # types.InputPeerUser that get_input_entity() returns --
+            # otherwise the server sees a malformed InputUser and
+            # rejects the whole send with a generic BAD_REQUEST. Both
+            # shapes carry the same user_id/access_hash fields, so
+            # utils.get_input_user() converts without another request.
+            input_peer = await self.get_input_entity(user)
+            input_user = utils.get_input_user(input_peer)
             entities[i] = types.InputMessageEntityMentionName(
                 entities[i].offset, entities[i].length,
-                await self.get_input_entity(user)
+                input_user
             )
             return True
         except (ValueError, TypeError):
