@@ -2,9 +2,11 @@ pypi https://pypi.org/project/spluslib/
 
 # SplusLib
 
+**Version 2.0.0**
+
 A complete, high-level Python userbot library for **Soroush Plus**, built on a
 Soroush-Plus-specific fork of the MTProto engine that powers Telethon.
-Messaging, files/media, group management, account management, and real
+Messaging, files/media, stories, group and account management, and real
 LiveKit-based voice/conference calls — all through a simple, consistent API.
 
 > 📄 مستندات فارسی: پایین همین فایل، بعد از بخش انگلیسی. / Persian
@@ -14,6 +16,7 @@ LiveKit-based voice/conference calls — all through a simple, consistent API.
 
 ## Table of Contents (English)
 
+- [What's new in 2.0.0](#whats-new-in-200)
 - [What's in this repo](#whats-in-this-repo)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -21,8 +24,10 @@ LiveKit-based voice/conference calls — all through a simple, consistent API.
 - [Events](#events)
 - [Messaging](#messaging)
 - [Files, photos, video, voice, audio](#files-photos-video-voice-audio)
+- [Stories](#stories)
 - [Account management](#account-management)
 - [Group / chat management](#group--chat-management)
+- [Invite links & join requests](#invite-links--join-requests)
 - [Contacts](#contacts)
 - [Conference calls (join + play audio)](#conference-calls-join--play-audio)
 - [Error handling](#error-handling)
@@ -36,12 +41,35 @@ LiveKit-based voice/conference calls — all through a simple, consistent API.
 pip install spluslib
 ```
 
+## What's new in 2.0.0
+
+- **Stories.** Check if a user has an active story, list a peer's active
+  stories, view/react/reply to a story, download a story's photo/video, and
+  get a shareable story link — see [Stories](#stories).
+- **Spoiler media.** `send_photo`/`send_video`/`send_file` accept
+  `spoiler=True` to send blurred "tap to reveal" media.
+- **Block/unblock.** `block_user()` / `unblock_user()`, including a
+  stories-only block option.
+- **Invite link management.** List a chat's existing invite links, edit
+  their settings or revoke them, delete them — beyond just creating new
+  ones. See [Invite links & join requests](#invite-links--join-requests).
+- **Join requests.** List pending join requests for a chat, approve or
+  decline them individually, or decline all at once.
+- **Chat usernames.** Check availability and set a public username for a
+  group/channel you admin.
+- **Identifiable device name.** `SplusClient(session_name)` now shows up in
+  Settings → Devices as `"<session_name> (SplusLib)"` by default instead of
+  a generic OS-based name, so each bot session is recognizable at a glance.
+  Override with `device_model=...` if you want something else.
+
+---
+
 ## What's in this repo
 
 ```
 spluslib/
 ├── __init__.py       # package entry point, exports SplusClient, events, errors, CallAudioSession
-├── client.py          # SplusClient -- the main high-level API (~2000 lines, ~80 public methods)
+├── client.py          # SplusClient -- the main high-level API (~3300 lines, ~105 public methods)
 ├── events.py           # friendly re-exports of the event classes (NewMessage, MessageEdited, ...)
 ├── errors.py            # friendly exception hierarchy (NotAdminError, FloodWaitError, ...)
 ├── call_audio.py          # CallAudioSession -- real LiveKit voice-call connection + audio playback
@@ -102,6 +130,10 @@ asyncio.run(main())
 
 Run it, enter the login code when prompted (interactively, or via
 `code_callback=` for non-interactive use), and the bot is live.
+
+By default this session shows up in Settings → Devices as
+`"my_session (SplusLib)"` — pass `device_model="..."` to `SplusClient(...)`
+if you want a different label.
 
 ---
 
@@ -245,6 +277,70 @@ Downloading:
 saved_path = await client.download_media(message_dict, file_path="/save/here.jpg")
 ```
 
+**Spoiler media** (blurred "tap to reveal" overlay, same as the official
+apps' spoiler toggle): pass `spoiler=True` to `send_photo`, `send_video`, or
+`send_file`. Only affects photos/videos sent as quick media; ignored for
+documents or other file types.
+
+```python
+await client.send_photo(chat_id, "/path/to/spoiler.jpg", spoiler=True)
+await client.send_video(chat_id, "/path/to/spoiler.mp4", spoiler=True)
+```
+
+---
+
+## Stories
+
+```python
+# Does a user currently have an active story? Returns info + a link if so.
+info = await client.has_story(user_id)
+# {"has_story": True, "stories": [...], "latest_story_id": 123, "link": "https://..."}
+if info["has_story"]:
+    print("They posted:", info["link"])
+
+# List all of a peer's currently active stories (empty list if none)
+stories = await client.get_user_stories(user_id)
+for story in stories:
+    print(story["id"], story["media"])
+
+# Mark a story as viewed/seen
+await client.send_story_view(user_id, story_id)
+
+# React to a story with an emoji (pass None to remove your reaction)
+await client.send_story_reaction(user_id, story_id, "❤")
+await client.send_story_reaction(user_id, story_id, None)
+
+# Reply to a story with a text message -- by owner + id, or by link
+await client.reply_to_story(user_id, story_id, "nice!")
+await client.reply_to_story("https://splus.ir/username/s/123", text="nice!")
+
+# Get a shareable link to a specific story, or omit story_id for
+# whatever they currently have up
+link = await client.get_story_link(user_id, story_id)
+link = await client.get_story_link(user_id)
+
+# Download a story's photo/video to disk (or bytes, in memory)
+path = await client.download_story(user_id, story_id)
+data = await client.download_story(user_id, story_id, bytes)
+```
+
+Each story dict has: `id`, `peer_id`, `date`, `expire_date`, `caption`,
+`pinned`, `is_public`, `close_friends`, `noforwards`, `edited`, `out`,
+`views_count`, `reactions_count`, `media` (raw media dict; feed to
+`download_story` rather than parsing this yourself).
+
+**Note on `get_story_link`:** some Soroush Plus accounts/setups reject this
+specific request server-side with a `NOT_SUPPORTED` error even when
+everything about the story itself is fine (public, has a username, etc).
+This is a server-side limitation outside the library's control — when it
+happens, `get_story_link` returns `None` instead of raising, same as if
+there were simply no story to link to.
+
+**Note on posting a new story:** SplusLib currently has **no `send_story`
+method** — the underlying TL schema this library ships with doesn't include
+a story-upload request at all, so posting a brand-new story isn't possible
+through this library right now.
+
 ---
 
 ## Account management
@@ -259,6 +355,12 @@ await client.update_username("my_new_username")
 
 await client.set_profile_photo("/path/to/avatar.jpg")   # progress bar by default too
 await client.delete_profile_photos()                     # deletes all, or pass photo_ids=[...]
+
+await client.block_user(user_id)
+await client.unblock_user(user_id)
+# stories-only block: they can still message you, just can't see it if
+# you're blocking them from seeing your stories, or vice versa for unblock
+await client.block_user(user_id, only_stories=True)
 ```
 
 ---
@@ -271,6 +373,10 @@ await client.set_chat_title(chat_id, "New Group Name")
 await client.set_chat_description(chat_id, "New description")
 await client.set_chat_photo(chat_id, "/path/to/photo.jpg")   # progress bar by default
 await client.delete_chat_photo(chat_id)
+
+# Public username for a group/channel you admin
+available = await client.check_chat_username(chat_id, "newusername")
+await client.set_chat_username(chat_id, "newusername")   # "" removes it, makes chat private
 
 # Full info: description, pinned message, admin/member/online counts, etc
 info = await client.get_chat_info(chat_id)
@@ -298,6 +404,46 @@ chats = await client.get_chats(limit=100)
 Every one of these raises `errors.NotAdminError` (or a more specific
 subclass) if the bot account can't do it — see
 [Error handling](#error-handling).
+
+---
+
+## Invite links & join requests
+
+```python
+# Create a fresh invite link with custom settings
+link = await client.get_chat_invite_link(
+    chat_id, title="My link", usage_limit=50, request_needed=True,
+)
+
+# List existing invite links (active by default, revoked=True for revoked ones)
+links = await client.get_chat_invite_links(chat_id)
+for l in links:
+    print(l["link"], l["usage"], l["title"])
+
+# Edit an existing link's settings
+await client.edit_chat_invite_link(chat_id, link, title="New title")
+
+# Revoke it (deactivate, but keep it listed)
+await client.edit_chat_invite_link(chat_id, link, revoke=True)
+
+# Permanently delete a revoked link
+await client.delete_chat_invite_link(chat_id, link)
+```
+
+For links created with `request_needed=True`, people who tap them show up
+as pending join requests instead of joining immediately:
+
+```python
+requests = await client.get_join_requests(chat_id)
+for req in requests:
+    print(req["user_id"], req["date"], req["about"])
+    await client.approve_join_request(chat_id, req["user_id"])
+    # or:
+    await client.decline_join_request(chat_id, req["user_id"])
+
+# Decline everyone pending at once (optionally scoped to one link)
+await client.decline_all_join_requests(chat_id)
+```
 
 ---
 
@@ -450,11 +596,25 @@ internally; you generally won't need to call it yourself.
 ### Account
 `get_me()`, `update_profile(first_name=..., last_name=..., about=...)`,
 `update_username(username)`, `set_profile_photo(photo, *, progress=True)`,
-`delete_profile_photos(photo_ids=None)`.
+`delete_profile_photos(photo_ids=None)`,
+`block_user(chat_id, *, only_stories=False)`,
+`unblock_user(chat_id, *, only_stories=False)`.
 
 ### Group/chat settings
 `set_chat_title(chat_id, title)`, `set_chat_description(chat_id, description)`,
-`set_chat_photo(chat_id, photo, *, progress=True)`, `delete_chat_photo(chat_id)`.
+`set_chat_photo(chat_id, photo, *, progress=True)`, `delete_chat_photo(chat_id)`,
+`check_chat_username(chat_id, username)`, `set_chat_username(chat_id, username)`.
+
+### Invite links & join requests
+`get_chat_invite_link(chat_id, *, title=None, expire_date=None, usage_limit=None, request_needed=False)`
+(creates a new link),
+`get_chat_invite_links(chat_id, *, revoked=False, admin_id=None, limit=100)`
+(lists existing links),
+`edit_chat_invite_link(chat_id, link, *, revoke=False, title=None, expire_date=None, usage_limit=None, request_needed=None)`,
+`delete_chat_invite_link(chat_id, link)`,
+`get_join_requests(chat_id, *, link=None, query=None, limit=100)`,
+`approve_join_request(chat_id, user_id)`, `decline_join_request(chat_id, user_id)`,
+`decline_all_join_requests(chat_id, *, link=None)`.
 
 ### Chats
 `get_chats(limit=100)`, `get_chat_info(chat_id)`,
@@ -481,9 +641,19 @@ internally; you generally won't need to call it yourself.
 `get_reactions(chat_id, message_id)`, `search_messages(chat_id, query, ...)`.
 
 ### Files / media
-`send_file(chat_id, file, ..., progress=True)`,
-`send_photo`, `send_video`, `send_document`, `send_voice`, `send_audio`
-(all accept `progress=`), `download_media(message, file_path=None)`.
+`send_file(chat_id, file, ..., spoiler=False, progress=True)`,
+`send_photo(chat_id, photo, ..., spoiler=False, progress=True)`,
+`send_video`, `send_document`, `send_voice`, `send_audio`
+(all accept `progress=`; `send_photo`/`send_video`/`send_file` accept
+`spoiler=`), `download_media(message, file_path=None)`.
+
+### Stories
+`has_story(chat_id)`, `get_user_stories(chat_id)`,
+`send_story_view(chat_id, story_id)`,
+`send_story_reaction(chat_id, story_id, emoji=None, *, add_to_recent=False)`,
+`reply_to_story(chat_id_or_link, story_id=None, text='', *, parse_mode='md', silent=False)`,
+`get_story_link(chat_id, story_id=None)`,
+`download_story(chat_id, story_id, file_path=None, *, progress=True)`.
 
 ### Contacts
 `add_contact(phone, first_name, last_name='')`, `get_contacts()`,
@@ -505,6 +675,14 @@ internally; you generally won't need to call it yourself.
 
 ## Known limitations
 
+- **No `send_story` method.** The underlying TL schema shipped with this
+  library has no story-upload request at all — posting a brand-new story
+  isn't possible through SplusLib right now, on any account.
+- **`get_story_link` can return `None` even for valid, public stories.**
+  Some Soroush Plus setups reject the underlying `ExportStoryLink` request
+  server-side with `NOT_SUPPORTED`. The library treats this the same as
+  "no link available" (returns `None`) rather than raising, since it's a
+  server-side limitation the caller can't do anything about.
 - `SplusClient.start_audio_stream()` / `.play_audio_file()` /
   `.play_audio_queue()` are deprecated no-op placeholders — use
   `CallAudioSession` instead.
@@ -571,6 +749,25 @@ here is what you need to know to be immediately useful:
     session file (`<session_name>.session`) on first successful login.
     Treat this file as a credential — it grants full account access without
     needing the login code again.
+11. **Story field names are inconsistent between event types.** On a
+    `NewMessage`-family event, the message id is `event.id` (not
+    `event.msg_id`). On a story's own dict from `get_user_stories()` /
+    `has_story()`, the story id is `story["id"]`, and the owner is
+    `story["peer_id"]` — these are two separate identifiers you pass
+    together to `send_story_view`, `send_story_reaction`,
+    `reply_to_story`, `get_story_link`, and `download_story`.
+12. **There is no `send_story` (post-a-new-story) method** — the TL schema
+    this library ships with doesn't define that request at all. Don't
+    invent or guess at an implementation for it; tell the user it isn't
+    currently supported.
+13. **`get_story_link` returning `None` is not necessarily a bug** in
+    caller code — some Soroush Plus setups reject the request server-side
+    (`NOT_SUPPORTED`) even for perfectly valid public stories. Treat a
+    `None` result the same as "no story to link to," don't assume the
+    chat_id/story_id passed in was wrong.
+14. **`chat_id` parameters accept a numeric `int`, a numeric-looking
+    `str`, a `@username` string, or `"me"`** — they're normalized
+    internally, so callers don't need to pre-convert types.
 
 ---
 
@@ -578,14 +775,17 @@ here is what you need to know to be immediately useful:
 
 # مستندات فارسی
 
+**نسخه‌ی ۲.۰.۰**
+
 کتابخونه‌ی کامل و سطح‌بالای پایتون برای ساخت یوزربات روی **Soroush Plus**،
 ساخته‌شده روی یک فورک اختصاصی Soroush Plus از موتور MTProto (همون چیزی که
-پایه‌ی Telethon هست). ارسال/دریافت پیام، فایل و مدیا، مدیریت گروه، مدیریت
-اکانت، و تماس‌های صوتی/کنفرانس واقعی (با LiveKit) — همه از طریق یک API ساده
-و یکدست.
+پایه‌ی Telethon هست). ارسال/دریافت پیام، فایل و مدیا، استوری، مدیریت گروه،
+مدیریت اکانت، و تماس‌های صوتی/کنفرانس واقعی (با LiveKit) — همه از طریق یک
+API ساده و یکدست.
 
 ## فهرست مطالب (فارسی)
 
+- [چه چیزهایی توی ۲.۰.۰ جدیده](#چه-چیزهایی-توی-۲۰۰-جدیده)
 - [محتوای این ریپازیتوری](#محتوای-این-ریپازیتوری)
 - [نصب](#نصب)
 - [شروع سریع](#شروع-سریع)
@@ -593,12 +793,37 @@ here is what you need to know to be immediately useful:
 - [ایونت‌ها](#ایونتها)
 - [پیام‌رسانی](#پیامرسانی)
 - [فایل، عکس، ویدیو، ویس، صدا](#فایل-عکس-ویدیو-ویس-صدا)
+- [استوری](#استوری)
 - [مدیریت اکانت](#مدیریت-اکانت)
 - [مدیریت گروه/چت](#مدیریت-گروهچت)
+- [لینک دعوت و درخواست‌های عضویت](#لینک-دعوت-و-درخواستهای-عضویت)
 - [مخاطبین](#مخاطبین)
 - [تماس‌های کنفرانسی (ورود + پخش صدا)](#تماسهای-کنفرانسی-ورود--پخش-صدا)
 - [مدیریت خطاها](#مدیریت-خطاها)
 - [محدودیت‌های شناخته‌شده](#محدودیتهای-شناختهشده)
+
+---
+
+## چه چیزهایی توی ۲.۰.۰ جدیده
+
+- **استوری.** چک کردن این‌که یه کاربر استوری فعال داره یا نه، لیست‌گیری
+  استوری‌های فعال یه peer، سین/ری‌اکشن/ریپلای روی استوری، دانلود عکس/ویدیوی
+  استوری، و گرفتن لینک استوری — بخش [استوری](#استوری) رو ببین.
+- **مدیای اسپویلر.** `send_photo`/`send_video`/`send_file` حالا `spoiler=True`
+  قبول می‌کنن برای ارسال مدیای تار با overlay «برای دیدن ضربه بزن».
+- **بلاک/آنبلاک.** `block_user()` / `unblock_user()`، شامل گزینه‌ی بلاک فقط
+  از استوری.
+- **مدیریت کامل لینک دعوت.** لیست‌گیری از لینک‌های موجود یه چت، ویرایش
+  تنظیماتشون یا غیرفعال‌کردنشون، حذفشون — نه فقط ساخت لینک جدید. بخش
+  [لینک دعوت و درخواست‌های عضویت](#لینک-دعوت-و-درخواستهای-عضویت) رو ببین.
+- **درخواست‌های عضویت.** لیست درخواست‌های عضویت در انتظار یه چت، قبول یا رد
+  کردن تک‌تکشون، یا رد کردن همه‌شون یه‌جا.
+- **یوزرنیم چت.** چک کردن در دسترس بودن و تنظیم یوزرنیم عمومی برای
+  گروه/کانالی که توش ادمینی.
+- **اسم دستگاه قابل‌تشخیص.** `SplusClient(session_name)` الان به‌صورت
+  پیش‌فرض توی تنظیمات ← دستگاه‌ها به‌شکل `"<session_name> (SplusLib)"`
+  نمایش داده میشه، نه یه اسم عمومی بر پایه‌ی سیستم‌عامل — یعنی هر سشن بات
+  با یه نگاه قابل‌تشخیصه. با `device_model=...` می‌تونی عوضش کنی.
 
 ---
 
@@ -607,7 +832,7 @@ here is what you need to know to be immediately useful:
 ```
 spluslib/
 ├── __init__.py       # نقطه‌ی ورود پکیج
-├── client.py           # SplusClient -- API اصلی سطح‌بالا (حدود ۸۰ متد عمومی)
+├── client.py           # SplusClient -- API اصلی سطح‌بالا (حدود ۱۰۵ متد عمومی)
 ├── events.py             # اسامی ساده برای کلاس‌های ایونت
 ├── errors.py               # هرم exception های قابل‌فهم
 ├── call_audio.py             # CallAudioSession -- اتصال واقعی صوتی به تماس‌ها با LiveKit
@@ -658,6 +883,10 @@ asyncio.run(main())
 
 اجراش کن، کد تأیید رو وارد کن (به‌صورت تعاملی، یا با `code_callback=` برای
 حالت غیرتعاملی)، و بات آماده‌ست.
+
+به‌صورت پیش‌فرض این سشن توی تنظیمات ← دستگاه‌ها به‌شکل
+`"my_session (SplusLib)"` نمایش داده میشه — اگه اسم دیگه‌ای می‌خوای،
+`device_model="..."` رو به `SplusClient(...)` بده.
 
 ---
 
@@ -782,6 +1011,69 @@ def my_callback(sent: int, total: int):
 saved_path = await client.download_media(message_dict, file_path="/save/here.jpg")
 ```
 
+**مدیای اسپویلر** (تار شده پشت یه overlay «برای دیدن ضربه بزن»، دقیقاً مثل
+سوییچ اسپویلر توی اپ‌های رسمی): `spoiler=True` رو به `send_photo`,
+`send_video`, یا `send_file` بده. فقط روی عکس/ویدیویی که به‌عنوان مدیای
+سریع ارسال میشه اثر داره؛ روی داکیومنت یا بقیه‌ی انواع فایل بی‌اثره.
+
+```python
+await client.send_photo(chat_id, "/path/to/spoiler.jpg", spoiler=True)
+await client.send_video(chat_id, "/path/to/spoiler.mp4", spoiler=True)
+```
+
+---
+
+## استوری
+
+```python
+# آیا الان یه کاربر استوری فعال داره؟ اطلاعات + لینک رو (اگه داشت) برمی‌گردونه
+info = await client.has_story(user_id)
+# {"has_story": True, "stories": [...], "latest_story_id": 123, "link": "https://..."}
+if info["has_story"]:
+    print("این استوری رو گذاشته:", info["link"])
+
+# لیست همه‌ی استوری‌های فعال یه کاربر/چت (اگه نداشت، لیست خالی)
+stories = await client.get_user_stories(user_id)
+for story in stories:
+    print(story["id"], story["media"])
+
+# سین کردن (علامت‌زدن به‌عنوان دیده‌شده) یه استوری
+await client.send_story_view(user_id, story_id)
+
+# ری‌اکشن به یه استوری (برای حذف ری‌اکشن، None بده)
+await client.send_story_reaction(user_id, story_id, "❤")
+await client.send_story_reaction(user_id, story_id, None)
+
+# ریپلای متنی روی یه استوری -- با آیدی مالک+استوری، یا با لینک
+await client.reply_to_story(user_id, story_id, "قشنگه!")
+await client.reply_to_story("https://splus.ir/username/s/123", text="قشنگه!")
+
+# گرفتن لینک یه استوری خاص، یا بدون story_id برای آخرین استوری فعالش
+link = await client.get_story_link(user_id, story_id)
+link = await client.get_story_link(user_id)
+
+# دانلود عکس/ویدیوی یه استوری روی دیسک (یا bytes، توی حافظه)
+path = await client.download_story(user_id, story_id)
+data = await client.download_story(user_id, story_id, bytes)
+```
+
+هر دیکشنری استوری این فیلدها رو داره: `id`, `peer_id`, `date`,
+`expire_date`, `caption`, `pinned`, `is_public`, `close_friends`,
+`noforwards`, `edited`, `out`, `views_count`, `reactions_count`, `media`
+(دیکشنری خام مدیا؛ به‌جای پارس‌کردن دستیش، به `download_story` بدش).
+
+**نکته درباره‌ی `get_story_link`:** بعضی از اکانت‌ها/تنظیمات سروش پلاس این
+درخواست خاص رو سمت سرور با خطای `NOT_SUPPORTED` رد می‌کنن، حتی وقتی همه‌چیز
+درباره‌ی خود استوری درسته (عمومیه، یوزرنیم داره و غیره). این یه محدودیت
+سمت سروره که خارج از کنترل کتابخونه‌ست — وقتی این اتفاق بیفته،
+`get_story_link` به‌جای raise کردن، `None` برمی‌گردونه، دقیقاً مثل حالتی که
+اصلاً استوری‌ای برای لینک‌دادن وجود نداشته باشه.
+
+**نکته درباره‌ی گذاشتن استوری جدید:** SplusLib فعلاً **هیچ متد
+`send_story` نداره** — چون schema خام TL که این کتابخونه باهاش میاد اصلاً
+درخواست آپلود استوری رو نداره، پس گذاشتن یه استوری کاملاً جدید فعلاً از
+طریق این کتابخونه ممکن نیست.
+
 ---
 
 ## مدیریت اکانت
@@ -796,6 +1088,11 @@ await client.update_username("my_new_username")
 
 await client.set_profile_photo("/path/to/avatar.jpg")   # این هم progress bar داره
 await client.delete_profile_photos()                     # همه رو حذف می‌کنه، یا photo_ids=[...] بده
+
+await client.block_user(user_id)
+await client.unblock_user(user_id)
+# بلاک فقط از استوری: هنوز می‌تونه بهت پیام بده، فقط استوریت رو نمی‌بینه
+await client.block_user(user_id, only_stories=True)
 ```
 
 ---
@@ -808,6 +1105,10 @@ await client.set_chat_title(chat_id, "اسم جدید گروه")
 await client.set_chat_description(chat_id, "توضیحات جدید")
 await client.set_chat_photo(chat_id, "/path/to/photo.jpg")   # progress bar پیش‌فرض
 await client.delete_chat_photo(chat_id)
+
+# یوزرنیم عمومی برای گروه/کانالی که توش ادمینی
+available = await client.check_chat_username(chat_id, "newusername")
+await client.set_chat_username(chat_id, "newusername")   # "" یعنی حذفش کن، چت خصوصی بشه
 
 # اطلاعات کامل: توضیحات، پیام پین‌شده، تعداد ادمین/عضو/آنلاین و غیره
 info = await client.get_chat_info(chat_id)
@@ -835,6 +1136,47 @@ chats = await client.get_chats(limit=100)
 هر کدوم از این‌ها اگه بات دسترسی لازم رو نداشته باشه `errors.NotAdminError`
 (یا زیرکلاس دقیق‌تری) raise می‌کنه — بخش [مدیریت خطاها](#مدیریت-خطاها) رو
 ببین.
+
+---
+
+## لینک دعوت و درخواست‌های عضویت
+
+```python
+# ساخت یه لینک دعوت جدید با تنظیمات دلخواه
+link = await client.get_chat_invite_link(
+    chat_id, title="لینک من", usage_limit=50, request_needed=True,
+)
+
+# لیست لینک‌های دعوت موجود (پیش‌فرض فعال‌ها، برای غیرفعال‌شده‌ها revoked=True)
+links = await client.get_chat_invite_links(chat_id)
+for l in links:
+    print(l["link"], l["usage"], l["title"])
+
+# ویرایش تنظیمات یه لینک موجود
+await client.edit_chat_invite_link(chat_id, link, title="عنوان جدید")
+
+# غیرفعال کردنش (revoke، ولی توی لیست می‌مونه)
+await client.edit_chat_invite_link(chat_id, link, revoke=True)
+
+# حذف کامل یه لینک غیرفعال‌شده
+await client.delete_chat_invite_link(chat_id, link)
+```
+
+برای لینک‌هایی که با `request_needed=True` ساخته شدن، کسایی که روشون بزنن
+به‌جای پیوستن مستقیم، به‌عنوان درخواست عضویت در انتظار تأیید نمایش داده
+میشن:
+
+```python
+requests = await client.get_join_requests(chat_id)
+for req in requests:
+    print(req["user_id"], req["date"], req["about"])
+    await client.approve_join_request(chat_id, req["user_id"])
+    # یا:
+    await client.decline_join_request(chat_id, req["user_id"])
+
+# رد کردن همه‌ی درخواست‌های در انتظار یه‌جا (یا فقط برای یه لینک خاص)
+await client.decline_all_join_requests(chat_id)
+```
 
 ---
 
@@ -969,6 +1311,15 @@ except errors.SplusError as e:
 
 ## محدودیت‌های شناخته‌شده
 
+- **متد `send_story` وجود نداره.** schema خام TL که این کتابخونه باهاش میاد
+  اصلاً درخواست آپلود استوری رو نداره — گذاشتن یه استوری کاملاً جدید فعلاً
+  از هیچ اکانتی از طریق SplusLib ممکن نیست.
+- **`get_story_link` حتی برای استوری‌های معتبر و عمومی هم ممکنه `None`
+  برگردونه.** بعضی از تنظیمات سروش پلاس درخواست خام `ExportStoryLink` رو
+  سمت سرور با `NOT_SUPPORTED` رد می‌کنن. کتابخونه این حالت رو دقیقاً مثل
+  «لینکی در کار نیست» در نظر می‌گیره (یعنی `None` برمی‌گردونه) به‌جای
+  raise کردن، چون این یه محدودیت سمت سروره که کاری از دست فراخوان‌کننده
+  براش برنمیاد.
 - `SplusClient.start_audio_stream()` / `.play_audio_file()` /
   `.play_audio_queue()` جایگزین‌های منسوخ و بی‌اثر هستن — به‌جاشون از
   `CallAudioSession` استفاده کن.
