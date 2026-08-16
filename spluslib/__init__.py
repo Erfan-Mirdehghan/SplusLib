@@ -27,7 +27,7 @@ from .client import SplusClient
 from . import events
 from . import errors
 
-__version__ = "2.0.2"
+__version__ = "2.0.0"
 __author__ = "Erfan Mirdehghan"
 
 __all__ = [
