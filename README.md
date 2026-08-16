@@ -2,7 +2,7 @@ pypi https://pypi.org/project/spluslib/
 
 # SplusLib
 
-**Version 2.0.0**
+**Version 2.0.2**
 
 A complete, high-level Python userbot library for **Soroush Plus**, built on a
 Soroush-Plus-specific fork of the MTProto engine that powers Telethon.
@@ -22,6 +22,8 @@ LiveKit-based voice/conference calls — all through a simple, consistent API.
 - [Quick start](#quick-start)
 - [Core concepts](#core-concepts)
 - [Events](#events)
+- [Event & message object API](#event--message-object-api)
+- [Complete `SplusClient` method reference](#complete-splusclient-method-reference)
 - [Messaging](#messaging)
 - [Files, photos, video, voice, audio](#files-photos-video-voice-audio)
 - [Stories](#stories)
@@ -41,7 +43,7 @@ LiveKit-based voice/conference calls — all through a simple, consistent API.
 pip install spluslib
 ```
 
-## What's new in 2.0.0
+## What's in 2.0.x
 
 - **Stories.** Check if a user has an active story, list a peer's active
   stories, view/react/reply to a story, download a story's photo/video, and
@@ -217,6 +219,387 @@ decorators: `client.add_event_handler(callback, event_type)` and
 `client.remove_event_handler(callback, event_type)`.
 
 ---
+
+
+## Event & message object API
+
+`NewMessage.Event` is intentionally message-like. The event forwards unknown
+attributes and methods to its underlying `Message` object, so code such as
+`event.reply(...)`, `event.text`, `event.chat_id`, and `event.sender_id` works
+directly. The event also exposes `event.message` when you want the underlying
+message object explicitly.
+
+### Common message properties
+
+| Property | Description |
+|---|---|
+| `text` | Formatted message text using the client's parse mode |
+| `raw_text` | Raw message text without formatting entities |
+| `is_reply` | `True` when the message replies to another message or story |
+| `reply_to_msg_id` | ID of the replied-to message, when available |
+| `reply_to_chat` | Chat/entity containing the replied-to message, when available |
+| `reply_to_sender` | Sender of the replied-to message, when available |
+| `forward` | Forward metadata for forwarded messages |
+| `buttons` | Inline/reply keyboard buttons, when present |
+| `button_count` | Total number of buttons |
+| `file` | Unified file wrapper for photo/document media |
+| `photo` | Photo media, when present |
+| `document` | Document media, when present |
+| `audio` | Audio document, excluding voice notes |
+| `voice` | Voice-message document |
+| `video` | Video document |
+| `video_note` | Round/video-note media |
+| `gif` | Animated/GIF-like document |
+| `sticker` | Sticker media |
+| `contact` | Shared contact media |
+| `game` | Game media |
+| `geo` | Location/venue coordinates |
+| `invoice` | Invoice/payment media |
+| `poll` | Poll media |
+| `venue` | Venue media |
+| `dice` | Dice/media payload |
+| `action_entities` | Entities involved in a service/action message |
+| `via_bot` / `via_input_bot` | Bot attribution information |
+| `to_id` | Destination peer information |
+
+### Message methods
+
+All network methods are async and should be awaited:
+
+```python
+@client.on_message()
+async def handler(msg):
+    # Reply to the incoming message
+    await msg.reply("Hello!")
+
+    # Send another message in the same chat, without replying
+    await msg.respond("This is a separate message")
+
+    # Edit the current message
+    await msg.edit("Edited text")
+
+    # Delete the current message
+    await msg.delete()
+
+    # Forward it somewhere
+    await msg.forward_to("@another_chat")
+
+    # Download attached media
+    path = await msg.download_media("/tmp")
+
+    # Mark as read
+    await msg.mark_read()
+
+    # Pin / unpin
+    await msg.pin()
+    await msg.unpin()
+```
+
+### Buttons and polls
+
+`Message.click()` can activate an inline/reply button or vote in a poll.
+
+```python
+# By row/column
+await msg.click(0, 0)
+
+# By visible button text
+await msg.click(text="Confirm")
+
+# By callback data
+await msg.click(data=b"payload")
+
+# Vote in a poll by answer index
+await msg.click(0)
+```
+
+You can also inspect the keyboard:
+
+```python
+buttons = await msg.get_buttons()
+
+for row in buttons or []:
+    for button in row:
+        print(button.text)
+```
+
+### Reply context
+
+```python
+if msg.is_reply:
+    replied = await msg.get_reply_message()
+    print(replied.raw_text if replied else "Original message unavailable")
+```
+
+### Sender and chat helpers
+
+```python
+sender = await msg.get_sender()
+chat = await msg.get_chat()
+
+print(sender)
+print(chat)
+```
+
+### Event-specific helpers
+
+`CallbackQuery.Event` provides:
+
+```python
+await event.answer("Done!")
+await event.respond("Response message")
+await event.reply("Reply to the callback message")
+await event.edit("Edited callback message")
+await event.delete()
+message = await event.get_message()
+```
+
+`ChatAction.Event` provides helpers such as:
+
+```python
+await event.get_user()
+await event.get_added_by()
+await event.get_kicked_by()
+await event.get_users()
+await event.get_input_user()
+await event.get_input_users()
+pinned = await event.get_pinned_message()
+pinned_messages = await event.get_pinned_messages()
+```
+
+`Album.Event` supports message-like operations including:
+
+```python
+await event.respond("Album response")
+await event.reply("Reply")
+await event.forward_to("@another_chat")
+await event.edit("Edited")
+await event.delete()
+await event.mark_read()
+await event.pin()
+```
+
+### Event aliases and custom filters
+
+`from spluslib import events` exposes the standard event classes plus
+convenience aliases:
+
+```python
+events.Message      # alias for NewMessage
+events.Edited       # alias for MessageEdited
+events.Deleted      # alias for MessageDeleted
+events.Action       # alias for ChatAction
+events.Update       # alias for UserUpdate
+events.Callback     # alias for CallbackQuery
+events.Inline       # alias for InlineQuery
+```
+
+It also includes ready-to-use filters:
+
+```python
+@client.on_message(events.Command("start"))
+async def start(msg):
+    await msg.reply("Hello!")
+
+@client.on_message(events.Text(contains="hello"))
+async def hello(msg):
+    await msg.reply("Hi!")
+
+@client.on_message(events.Private())
+async def private_only(msg):
+    ...
+
+@client.on_message(events.Group())
+async def group_only(msg):
+    ...
+
+@client.on_message(events.And(events.Group(), events.Incoming()))
+async def incoming_group(msg):
+    ...
+```
+
+Available custom filters are `Command`, `Text`, `Private`, `Group`, `Channel`,
+`Incoming`, `Outgoing`, `And`, and `Or`.
+
+---
+
+## Complete `SplusClient` method reference
+
+The shipped `SplusClient` currently exposes the following public high-level API:
+
+### Lifecycle & events
+
+```text
+start()
+stop()
+run_until_disconnected()
+on()
+add_event_handler()
+remove_event_handler()
+on_message()
+on_edited()
+on_update()
+on_deleted()
+on_read()
+on_reaction()
+on_chat_action()
+on_user_update()
+on_callback()
+on_inline()
+on_album()
+on_raw()
+```
+
+### Account & contacts
+
+```text
+get_me()
+update_profile()
+update_username()
+set_profile_photo()
+delete_profile_photos()
+block_user()
+unblock_user()
+add_contact()
+get_contacts()
+delete_contact()
+get_user_by_phone()
+report_user()
+```
+
+### Chats & groups
+
+```text
+set_chat_title()
+set_chat_description()
+set_chat_photo()
+delete_chat_photo()
+get_chats()
+get_chat_info()
+get_chat_members()
+is_admin()
+get_banned_users()
+ban_member()
+unban_member()
+mute_member()
+set_admin()
+remove_admin()
+create_channel()
+create_group()
+leave_chat()
+join_group_by_invite()
+check_chat_username()
+set_chat_username()
+```
+
+### Invites & join requests
+
+```text
+get_chat_invite_link()
+get_chat_invite_links()
+edit_chat_invite_link()
+delete_chat_invite_link()
+get_join_requests()
+approve_join_request()
+decline_join_request()
+decline_all_join_requests()
+```
+
+### Messages & reactions
+
+```text
+send_message()
+mention_user()
+get_messages()
+get_message_by_id()
+delete_messages()
+edit_message()
+forward_messages()
+pin_message()
+unpin_message()
+react_message()
+get_reactions()
+search_messages()
+report_message()
+```
+
+### Files & media
+
+```text
+send_file()
+send_photo()
+send_video()
+send_document()
+send_voice()
+send_audio()
+download_media()
+```
+
+All file upload methods that expose `progress=` support the built-in progress
+display or a custom sync/async callback. `send_photo()`, `send_video()`, and
+`send_file()` also support `spoiler=True` for supported media.
+
+### Polls
+
+```text
+send_poll()
+vote_poll()
+close_poll()
+get_poll_results()
+```
+
+### Stories
+
+```text
+get_story_link()
+download_story()
+get_user_stories()
+has_story()
+send_story_view()
+send_story_reaction()
+reply_to_story()
+```
+
+There is currently no `send_story()` method for posting a brand-new story.
+
+### Conference calls
+
+```text
+create_group_call()
+resolve_group_call()
+join_group_call()
+leave_group_call()
+end_group_call()
+get_group_call_info()
+mute_participant()
+remove_participant()
+ban_participant()
+unban_participant()
+get_banned_participants()
+get_active_group_calls()
+```
+
+### Legacy audio placeholders
+
+```text
+start_audio_stream()
+play_audio_file()
+play_audio_queue()
+```
+
+These legacy placeholders are deprecated no-ops in the shipped code; use
+`CallAudioSession` for actual LiveKit audio playback.
+
+---
+
+## Version note
+
+This README documents the public API shipped with the uploaded SplusLib source
+and the current `2.0.2` PyPI release. The PyPI page lists `2.0.2` as the
+latest release on August 16, 2026. The uploaded source archive itself still
+contains an internal `__version__ = "2.0.0"` value, so the README version is
+based on the published package version rather than that stale internal string.
+
 
 ## Messaging
 
@@ -775,7 +1158,7 @@ here is what you need to know to be immediately useful:
 
 # مستندات فارسی
 
-**نسخه‌ی ۲.۰.۰**
+**نسخه‌ی ۲.۰.۲**
 
 کتابخونه‌ی کامل و سطح‌بالای پایتون برای ساخت یوزربات روی **Soroush Plus**،
 ساخته‌شده روی یک فورک اختصاصی Soroush Plus از موتور MTProto (همون چیزی که
@@ -791,6 +1174,8 @@ API ساده و یکدست.
 - [شروع سریع](#شروع-سریع)
 - [مفاهیم پایه](#مفاهیم-پایه)
 - [ایونت‌ها](#ایونتها)
+- [API آبجکت رویداد و پیام](#api-آبجکت-رویداد-و-پیام)
+- [مرجع کامل متدهای `SplusClient`](#مرجع-کامل-متدهای-splusclient)
 - [پیام‌رسانی](#پیامرسانی)
 - [فایل، عکس، ویدیو، ویس، صدا](#فایل-عکس-ویدیو-ویس-صدا)
 - [استوری](#استوری)
@@ -804,7 +1189,7 @@ API ساده و یکدست.
 
 ---
 
-## چه چیزهایی توی ۲.۰.۰ جدیده
+## وضعیت نسخه ۲.۰.x
 
 - **استوری.** چک کردن این‌که یه کاربر استوری فعال داره یا نه، لیست‌گیری
   استوری‌های فعال یه peer، سین/ری‌اکشن/ریپلای روی استوری، دانلود عکس/ویدیوی
@@ -951,6 +1336,199 @@ SplusLib یه متد کوتاه به‌ازای هر نوع ایونت میده:
 `client.remove_event_handler(callback, event_type)`.
 
 ---
+
+
+## API آبجکت رویداد و پیام
+
+در رویدادهای پیام، `event` مانند یک `Message` رفتار می‌کند؛ یعنی خیلی از
+ویژگی‌ها و متدهای پیام را می‌توانی مستقیم روی خود رویداد صدا بزنی:
+
+```python
+@client.on_message()
+async def handler(msg):
+    await msg.reply("سلام!")
+    await msg.respond("پیام جداگانه")
+    await msg.edit("متن ویرایش‌شده")
+    await msg.delete()
+    await msg.forward_to("@another_chat")
+    path = await msg.download_media("/tmp")
+    await msg.mark_read()
+    await msg.pin()
+    await msg.unpin()
+```
+
+### ویژگی‌های مهم پیام
+
+`text`, `raw_text`, `is_reply`, `forward`, `reply_to_msg_id`,
+`reply_to_chat`, `reply_to_sender`, `buttons`, `button_count`, `file`,
+`photo`, `document`, `web_preview`, `audio`, `voice`, `video`,
+`video_note`, `gif`, `sticker`, `contact`, `game`, `geo`, `invoice`,
+`poll`, `venue`, `dice`, `action_entities`, `via_bot`, `via_input_bot`,
+و `to_id`.
+
+### متدهای مهم پیام
+
+```text
+get_buttons()
+get_reply_message()
+respond(...)
+reply(...)
+forward_to(...)
+edit(...)
+delete(...)
+download_media(...)
+click(...)
+mark_read()
+pin(...)
+unpin()
+get_sender()
+get_chat()
+```
+
+### دکمه‌ها و Poll
+
+```python
+await msg.click(0, 0)
+await msg.click(text="تأیید")
+await msg.click(data=b"payload")
+
+buttons = await msg.get_buttons()
+```
+
+`click()` علاوه بر دکمه‌ها می‌تواند برای رأی‌دادن به Poll هم استفاده شود.
+
+### اطلاعات پیام اصلی در Reply
+
+```python
+if msg.is_reply:
+    replied = await msg.get_reply_message()
+    if replied:
+        print(replied.raw_text)
+```
+
+### فرستنده و چت
+
+```python
+sender = await msg.get_sender()
+chat = await msg.get_chat()
+```
+
+### API Callback
+
+```python
+await event.answer("انجام شد!")
+await event.respond("پاسخ")
+await event.reply("ریپلای")
+await event.edit("ویرایش")
+await event.delete()
+
+message = await event.get_message()
+```
+
+### فیلترهای آماده
+
+```python
+@client.on_message(events.Command("start"))
+async def start(msg):
+    await msg.reply("سلام!")
+
+@client.on_message(events.Text(contains="hello"))
+async def hello(msg):
+    await msg.reply("سلام!")
+
+@client.on_message(events.Private())
+async def private(msg):
+    ...
+
+@client.on_message(events.Group())
+async def group(msg):
+    ...
+```
+
+فیلترهای آماده شامل `Command`, `Text`, `Private`, `Group`, `Channel`,
+`Incoming`, `Outgoing`, `And` و `Or` هستند.
+
+---
+
+## مرجع کامل متدهای `SplusClient`
+
+### چرخه و رویدادها
+
+`start()`, `stop()`, `run_until_disconnected()`, `on()`,
+`add_event_handler()`, `remove_event_handler()`, `on_message()`,
+`on_edited()`, `on_update()`, `on_deleted()`, `on_read()`, `on_reaction()`,
+`on_chat_action()`, `on_user_update()`, `on_callback()`, `on_inline()`,
+`on_album()`, `on_raw()`.
+
+### اکانت و مخاطبین
+
+`get_me()`, `update_profile()`, `update_username()`, `set_profile_photo()`,
+`delete_profile_photos()`, `block_user()`, `unblock_user()`, `add_contact()`,
+`get_contacts()`, `delete_contact()`, `get_user_by_phone()`, `report_user()`.
+
+### چت و گروه
+
+`set_chat_title()`, `set_chat_description()`, `set_chat_photo()`,
+`delete_chat_photo()`, `get_chats()`, `get_chat_info()`, `get_chat_members()`,
+`is_admin()`, `get_banned_users()`, `ban_member()`, `unban_member()`,
+`mute_member()`, `set_admin()`, `remove_admin()`, `create_channel()`,
+`create_group()`, `leave_chat()`, `join_group_by_invite()`,
+`check_chat_username()`, `set_chat_username()`.
+
+### لینک دعوت و درخواست عضویت
+
+`get_chat_invite_link()`, `get_chat_invite_links()`,
+`edit_chat_invite_link()`, `delete_chat_invite_link()`,
+`get_join_requests()`, `approve_join_request()`, `decline_join_request()`,
+`decline_all_join_requests()`.
+
+### پیام‌ها
+
+`send_message()`, `mention_user()`, `get_messages()`, `get_message_by_id()`,
+`delete_messages()`, `edit_message()`, `forward_messages()`, `pin_message()`,
+`unpin_message()`, `react_message()`, `get_reactions()`,
+`search_messages()`, `report_message()`.
+
+### فایل و مدیا
+
+`send_file()`, `send_photo()`, `send_video()`, `send_document()`,
+`send_voice()`, `send_audio()`, `download_media()`.
+
+### Poll
+
+`send_poll()`, `vote_poll()`, `close_poll()`, `get_poll_results()`.
+
+### استوری
+
+`get_story_link()`, `download_story()`, `get_user_stories()`, `has_story()`,
+`send_story_view()`, `send_story_reaction()`, `reply_to_story()`.
+
+در حال حاضر متد `send_story()` برای ساخت استوری جدید وجود ندارد.
+
+### تماس‌های کنفرانسی
+
+`create_group_call()`, `resolve_group_call()`, `join_group_call()`,
+`leave_group_call()`, `end_group_call()`, `get_group_call_info()`,
+`mute_participant()`, `remove_participant()`, `ban_participant()`,
+`unban_participant()`, `get_banned_participants()`,
+`get_active_group_calls()`.
+
+### متدهای صوتی قدیمی
+
+`start_audio_stream()`, `play_audio_file()`, `play_audio_queue()` در نسخه‌ی
+فعلی placeholder منسوخ‌شده هستند و عملیات واقعی انجام نمی‌دهند؛ برای پخش
+صدا در تماس از `CallAudioSession` استفاده کن.
+
+---
+
+## یادداشت نسخه
+
+این README بر اساس API موجود در سورس آپلودشده و نسخه‌ی منتشرشده‌ی `2.0.2`
+تنظیم شده است. صفحه‌ی PyPI، نسخه‌ی `2.0.2` را به‌عنوان انتشار فعلی در
+۱۶ اوت ۲۰۲۶ نشان می‌دهد. در سورس آرشیوی که بررسی شد، مقدار داخلی
+`__version__` هنوز `2.0.0` است؛ بنابراین شماره‌ی نسخه‌ی README بر اساس
+نسخه‌ی منتشرشده در PyPI تنظیم شده است.
+
 
 ## پیام‌رسانی
 
