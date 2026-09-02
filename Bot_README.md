@@ -3,7 +3,7 @@
 High-level, async Python library for **Soroush Plus**. Two independent clients, pick whichever fits:
 
 - **`SplusClient`** — an MTProto *userbot* client (logs in as a real account, phone number + login code, can do anything a person can do in the app: messages, files, stories, groups, calls, ...).
-- **`BotClient`** — a client for the official **HTTP Bot API** (`api.splus.ir`), which is a near-exact clone of the Telegram Bot API. Logs in with a bot token from `splus.ir/fatherbot`, no phone number involved.
+- **`BotClient`** — a client for the official **HTTP Bot API** (`api.splus.ir`), which is a near-exact clone of the Telegram Bot API. Logs in with a bot token from `splus.ir/botfather`, no phone number involved.
 
 They're fully independent to use, but ship together — one `pip install spluslib` gets both `SplusClient` and `BotClient` working, no extras required:
 
@@ -20,7 +20,7 @@ pip install spluslib[all]               # + SOCKS proxy support + conference cal
 import asyncio
 from spluslib import BotClient
 
-bot = BotClient("123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")  # from splus.ir/fatherbot
+bot = BotClient("123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")  # from splus.ir/botfather
 
 @bot.on_message(lambda m: m.get("text") == "/start")
 async def start(msg):
