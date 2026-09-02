@@ -390,6 +390,28 @@ class Message(ChatGetter, SenderGetter, TLObject):
         return self._client
 
     @property
+    def is_me(self):
+        """
+        Alias for `.out` under a clearer name for userbot code: `True`
+        if this message was sent by the same account the bot is
+        logged in as (from any session/device, not just this script),
+        `False` if someone else sent it.
+
+        This matters for userbots specifically because there's no
+        separate "bot account" -- the account you're logged in as can
+        send messages itself (from the phone app, another script,
+        etc), and this is how you tell those apart from messages other
+        people send:
+
+            @bot.on_message()
+            async def handler(msg):
+                if msg.is_me:
+                    return  # ignore your own messages
+                ...
+        """
+        return self.out
+
+    @property
     def text(self):
         """
         The message text, formatted using the client's default

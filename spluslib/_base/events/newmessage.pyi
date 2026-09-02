@@ -90,6 +90,9 @@ class NewMessage:
         def is_reply(self) -> bool: ...
 
         @property
+        def is_me(self) -> bool: ...
+
+        @property
         def forward(self) -> Optional[Forward]: ...
 
         @property

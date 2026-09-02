@@ -24,8 +24,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ._base.errors import rpcerrorlist as _rpc
-from ._base.errors.common import MultiError as _MultiError
+# NOTE: no top-level import of spluslib._base here on purpose. That
+# package (the vendored MTProto engine) needs pyaes/rsa/pysocks, but
+# this module is also imported by BotClient (spluslib.bot_client),
+# which only needs aiohttp and has nothing to do with MTProto at all.
+# The RPC-error-class mapping below is built lazily, the first time
+# translate() actually runs, so `import spluslib.errors` alone never
+# requires the MTProto engine's dependencies to be installed.
 
 
 class SplusError(Exception):
@@ -202,6 +207,31 @@ class AlreadyInCallError(SplusError):
 
 
 # --------------------------------------------------------------------- #
+# Bot API (HTTP) errors -- raised by BotClient, the official
+# api.splus.ir/bot<token>/METHOD HTTP Bot API wrapper. This is a
+# completely separate transport from the MTProto userbot engine above
+# (no _base involved at all), but errors from it still use SplusError
+# as their base so callers can catch either kind of client the same way.
+# --------------------------------------------------------------------- #
+
+class BotAPIError(SplusError):
+    """The Bot API returned `ok: false` for a request. `.error_code`
+    is the HTTP-style status code Soroush Plus returned (400, 403,
+    404, 409, 429, ...) and `.description` is their human-readable
+    explanation -- both straight from the response JSON."""
+
+    def __init__(self, description: str, *, error_code: int = None,
+                 parameters: Optional[dict] = None, original: Optional[Exception] = None):
+        self.error_code = error_code
+        self.description = description
+        self.parameters = parameters or {}
+        super().__init__(
+            f"Bot API error {error_code}: {description}" if error_code else description,
+            original=original,
+        )
+
+
+# --------------------------------------------------------------------- #
 # Fallback for anything we don't have a specific mapping for yet
 # --------------------------------------------------------------------- #
 
@@ -219,65 +249,86 @@ class UnknownError(SplusError):
 # is not silently swallowed.
 # --------------------------------------------------------------------- #
 
-_ERROR_MAP = {
-    # Permission / admin
-    _rpc.ChatAdminRequiredError: NotAdminError,
-    _rpc.ChatAdminInviteRequiredError: NotAdminError,
-    _rpc.ChatWriteForbiddenError: NoPermissionError,
-    _rpc.ChatForbiddenError: NoPermissionError,
-    _rpc.ChatGuestSendForbiddenError: NoPermissionError,
-    _rpc.ChatSendMediaForbiddenError: NoPermissionError,
-    _rpc.ChatSendStickersForbiddenError: NoPermissionError,
-    _rpc.ChatSendGifsForbiddenError: NoPermissionError,
-    _rpc.ChatSendGameForbiddenError: NoPermissionError,
-    _rpc.ChatSendPollForbiddenError: NoPermissionError,
-    _rpc.ChatRestrictedError: NoPermissionError,
-    _rpc.ChatForwardsRestrictedError: NoPermissionError,
-    _rpc.BroadcastForbiddenError: NoPermissionError,
+_ERROR_MAP = None  # built lazily by _get_error_map() below
 
-    # Users / membership
-    _rpc.UserNotParticipantError: UserNotInChatError,
-    _rpc.UserAlreadyParticipantError: UserAlreadyInChatError,
-    _rpc.UserBlockedError: UserBlockedYouError,
-    _rpc.UserPrivacyRestrictedError: UserPrivacyError,
-    _rpc.UserDeactivatedError: UserDeactivatedError,
-    _rpc.UserDeactivatedBanError: UserDeactivatedError,
-    _rpc.UserKickedError: UserNotInChatError,
-    _rpc.UserBannedInChannelError: NoPermissionError,
-    _rpc.InputUserDeactivatedError: UserDeactivatedError,
 
-    # Chats
-    _rpc.ChannelInvalidError: ChatNotFoundError,
-    _rpc.ChannelIdInvalidError: ChatNotFoundError,
-    _rpc.ChatIdInvalidError: ChatNotFoundError,
-    _rpc.ChatInvalidError: InvalidChatError,
-    _rpc.PeerIdInvalidError: ChatNotFoundError,
+def _get_error_map():
+    """
+    Build (once, cached) the mapping from low-level MTProto RPC error
+    classes to the friendly SplusError subclasses above. Only imports
+    spluslib._base (which needs pyaes/rsa/pysocks) the first time this
+    actually runs -- i.e. the first time translate() is called with
+    something that isn't already a SplusError, which in practice means
+    "the first time SplusClient/MTProto code translates a real error".
+    BotClient never triggers this at all, since BotAPIError is already
+    a SplusError and translate() returns immediately for those.
+    """
+    global _ERROR_MAP
+    if _ERROR_MAP is not None:
+        return _ERROR_MAP
 
-    # Messages / media
-    _rpc.MessageTooLongError: MessageTooLongError,
-    _rpc.MessageIdInvalidError: MessageNotFoundError,
-    _rpc.MessageNotModifiedError: MessageNotModifiedError,
-    _rpc.MessageEmptyError: EmptyMessageError,
-    _rpc.MediaEmptyError: InvalidMediaError,
-    _rpc.MediaInvalidError: InvalidMediaError,
+    from ._base.errors import rpcerrorlist as _rpc
 
-    # Usernames
-    _rpc.UsernameInvalidError: InvalidUsernameError,
-    _rpc.UsernameOccupiedError: UsernameTakenError,
-    _rpc.UsernameNotOccupiedError: UsernameNotFoundError,
+    _ERROR_MAP = {
+        # Permission / admin
+        _rpc.ChatAdminRequiredError: NotAdminError,
+        _rpc.ChatAdminInviteRequiredError: NotAdminError,
+        _rpc.ChatWriteForbiddenError: NoPermissionError,
+        _rpc.ChatForbiddenError: NoPermissionError,
+        _rpc.ChatGuestSendForbiddenError: NoPermissionError,
+        _rpc.ChatSendMediaForbiddenError: NoPermissionError,
+        _rpc.ChatSendStickersForbiddenError: NoPermissionError,
+        _rpc.ChatSendGifsForbiddenError: NoPermissionError,
+        _rpc.ChatSendGameForbiddenError: NoPermissionError,
+        _rpc.ChatSendPollForbiddenError: NoPermissionError,
+        _rpc.ChatRestrictedError: NoPermissionError,
+        _rpc.ChatForwardsRestrictedError: NoPermissionError,
+        _rpc.BroadcastForbiddenError: NoPermissionError,
 
-    # Flood
-    _rpc.FloodWaitError: FloodWaitError,
-    _rpc.PeerFloodError: TooManyRequestsError,
+        # Users / membership
+        _rpc.UserNotParticipantError: UserNotInChatError,
+        _rpc.UserAlreadyParticipantError: UserAlreadyInChatError,
+        _rpc.UserBlockedError: UserBlockedYouError,
+        _rpc.UserPrivacyRestrictedError: UserPrivacyError,
+        _rpc.UserDeactivatedError: UserDeactivatedError,
+        _rpc.UserDeactivatedBanError: UserDeactivatedError,
+        _rpc.UserKickedError: UserNotInChatError,
+        _rpc.UserBannedInChannelError: NoPermissionError,
+        _rpc.InputUserDeactivatedError: UserDeactivatedError,
 
-    # Auth
-    _rpc.PhoneNumberInvalidError: InvalidPhoneError,
-    _rpc.PhoneCodeInvalidError: InvalidCodeError,
-    _rpc.PhoneCodeExpiredError: ExpiredCodeError,
-    _rpc.PhoneCodeEmptyError: InvalidCodeError,
-    _rpc.PasswordHashInvalidError: InvalidPasswordError,
-    _rpc.SessionPasswordNeededError: PasswordNeededError,
-}
+        # Chats
+        _rpc.ChannelInvalidError: ChatNotFoundError,
+        _rpc.ChannelIdInvalidError: ChatNotFoundError,
+        _rpc.ChatIdInvalidError: ChatNotFoundError,
+        _rpc.ChatInvalidError: InvalidChatError,
+        _rpc.PeerIdInvalidError: ChatNotFoundError,
+
+        # Messages / media
+        _rpc.MessageTooLongError: MessageTooLongError,
+        _rpc.MessageIdInvalidError: MessageNotFoundError,
+        _rpc.MessageNotModifiedError: MessageNotModifiedError,
+        _rpc.MessageEmptyError: EmptyMessageError,
+        _rpc.MediaEmptyError: InvalidMediaError,
+        _rpc.MediaInvalidError: InvalidMediaError,
+
+        # Usernames
+        _rpc.UsernameInvalidError: InvalidUsernameError,
+        _rpc.UsernameOccupiedError: UsernameTakenError,
+        _rpc.UsernameNotOccupiedError: UsernameNotFoundError,
+
+        # Flood
+        _rpc.FloodWaitError: FloodWaitError,
+        _rpc.PeerFloodError: TooManyRequestsError,
+
+        # Auth
+        _rpc.PhoneNumberInvalidError: InvalidPhoneError,
+        _rpc.PhoneCodeInvalidError: InvalidCodeError,
+        _rpc.PhoneCodeExpiredError: ExpiredCodeError,
+        _rpc.PhoneCodeEmptyError: InvalidCodeError,
+        _rpc.PasswordHashInvalidError: InvalidPasswordError,
+        _rpc.SessionPasswordNeededError: PasswordNeededError,
+    }
+    return _ERROR_MAP
 
 
 def translate(exc: Exception) -> SplusError:
@@ -291,7 +342,9 @@ def translate(exc: Exception) -> SplusError:
     if isinstance(exc, SplusError):
         return exc
 
-    mapped = _ERROR_MAP.get(type(exc))
+    error_map = _get_error_map()
+
+    mapped = error_map.get(type(exc))
     if mapped is not None:
         if mapped is FloodWaitError:
             seconds = getattr(exc, "seconds", 0)
@@ -301,7 +354,7 @@ def translate(exc: Exception) -> SplusError:
     # Walk the MRO in case it's a subclass of something we do map
     # (the rpcerrorlist classes are a flat hierarchy in practice, but
     # this keeps us robust if that ever changes).
-    for exc_type, mapped_type in _ERROR_MAP.items():
+    for exc_type, mapped_type in error_map.items():
         if isinstance(exc, exc_type):
             if mapped_type is FloodWaitError:
                 seconds = getattr(exc, "seconds", 0)

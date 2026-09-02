@@ -82,88 +82,13 @@ def _norm_chat_id(chat_id: Union[int, str, None]) -> Union[int, str, None]:
     return chat_id
 
 
-def _human_size(num_bytes: float) -> str:
-    """Format a byte count as a short human-readable string (KB/MB/GB)."""
-    for unit in ("B", "KB", "MB", "GB"):
-        if num_bytes < 1024 or unit == "GB":
-            return f"{num_bytes:.1f}{unit}" if unit != "B" else f"{int(num_bytes)}{unit}"
-        num_bytes /= 1024
-    return f"{num_bytes:.1f}GB"
-
-
-def _file_label(file: Union[str, bytes]) -> str:
-    """A short label for progress output: the filename if we have a
-    path, otherwise a generic placeholder for raw bytes/URLs."""
-    if isinstance(file, str) and not file.startswith(("http://", "https://")):
-        return os.path.basename(file) or file
-    if isinstance(file, str):
-        return file
-    return "file"
-
-
-def _make_console_progress_printer(label: str):
-    """
-    Build a progress_callback(sent, total) that prints a live-updating
-    single-line progress bar to the console, e.g.:
-
-        Uploading song.mp3: [##########----------]  50% (2.4/4.8 MB)
-
-    Throttled to at most ~10 updates/second so it doesn't spam the
-    terminal on fast local uploads.
-    """
-    state = {"last_print": 0.0}
-
-    def _callback(sent: int, total: int) -> None:
-        now = time.monotonic()
-        is_done = total > 0 and sent >= total
-        if not is_done and (now - state["last_print"]) < 0.1:
-            return
-        state["last_print"] = now
-
-        pct = int(sent * 100 / total) if total else 0
-        bar_width = 20
-        filled = int(bar_width * pct / 100)
-        bar = "#" * filled + "-" * (bar_width - filled)
-        sys.stdout.write(
-            f"\rUploading {label}: [{bar}] {pct:3d}% "
-            f"({_human_size(sent)}/{_human_size(total)})"
-        )
-        sys.stdout.flush()
-        if is_done:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-
-    return _callback
-
-
-def _resolve_progress_callback(
-    file: Union[str, bytes],
-    progress: Union[bool, Callable[[int, int], None], None],
-) -> Optional[Callable]:
-    """
-    Turn the `progress=` argument accepted by send_file/send_photo/etc
-    into an actual progress_callback to hand to the underlying engine.
-
-    progress=True (default) -> built-in console progress bar
-    progress=False / None   -> no progress reporting
-    progress=<callable>     -> that callable, used as-is (called with
-                                (bytes_sent, total_bytes); may be sync
-                                or async)
-    """
-    if progress is False or progress is None:
-        return None
-    if progress is True:
-        return _make_console_progress_printer(_file_label(file))
-    if callable(progress):
-        return progress
-    return None
-
-
-def _finish_progress_line(file: Union[str, bytes], progress) -> None:
-    """No-op placeholder kept for symmetry/readability at call sites;
-    the console printer already emits its own trailing newline once
-    sent >= total, so there is nothing extra to do here."""
-    return
+from ._progress import (
+    human_size as _human_size,
+    file_label as _file_label,
+    make_console_progress_printer as _make_console_progress_printer,
+    resolve_progress_callback as _resolve_progress_callback,
+    finish_progress_line as _finish_progress_line,
+)
 
 
 class SplusClient:
@@ -306,10 +231,38 @@ class SplusClient:
             async def start_cmd(event):
                 ...
 
+        A filter object like events.Command(...)/events.Text(...)/
+        events.Group()/a plain function -- anything callable -- can
+        also be passed directly (positionally or as func=) and is
+        applied as the event's func= filter:
+
+            @client.on(events.NewMessage, events.Command("start"))
+            async def start_cmd(event):
+                ...
+
+        This also means an *un*callable first positional argument is
+        always treated as `chats` (a chat id/username/list of them to
+        restrict the handler to), matching the underlying event
+        classes' own chats-first signature -- e.g.
+        `client.on(events.NewMessage, chat_id)`.
+
         For most bots, the on_message()/on_edited()/on_callback()/etc
         shortcuts below are simpler and cover the same event types
         without needing to import spluslib.events at all.
         """
+        if args and callable(args[0]) and 'func' not in kwargs:
+            # A callable in the first positional slot is a filter
+            # (events.Command(...), events.Text(...), a plain
+            # function, etc), never a chat id/username -- chats are
+            # never callable -- so route it to func= instead of
+            # letting it fall through to the event class's `chats`
+            # parameter, which is positional-first on every event
+            # type and would otherwise crash deep in peer resolution
+            # with a confusing "Cannot cast X to any kind of Peer"
+            # error far from the actual mistake.
+            kwargs['func'] = args[0]
+            args = args[1:]
+
         def decorator(func: Callable):
             handler = self._client.add_event_handler(func, event_type(*args, **kwargs))
             self._handlers.append(handler)
@@ -361,7 +314,16 @@ class SplusClient:
     ) -> Callable[[_F], _F]: ...
 
     def on_message(self, *args, **kwargs):
-        """Register a handler for new incoming/outgoing messages."""
+        """
+        Register a handler for new incoming/outgoing messages.
+
+        A filter (events.Command(...), events.Text(...), a plain
+        function, etc) can be passed positionally or as func=:
+
+            @bot.on_message(events.Command("start"))
+            async def start_cmd(msg):
+                ...
+        """
         return self.on(events.NewMessage, *args, **kwargs)
 
     @overload
@@ -389,6 +351,8 @@ class SplusClient:
         Accepts the same filter kwargs as on_message()/on_edited()
         (pattern, chats, incoming, outgoing, from_users, etc), applied
         identically to both the new-message and edited-message streams.
+        A filter (events.Command(...), etc) can be passed positionally
+        or as func=, same as on_message().
 
             @bot.on_update(pattern=r"(?i)badword")
             async def moderate(event):
@@ -396,6 +360,13 @@ class SplusClient:
                 # or was edited into an existing one
                 await event.delete()
         """
+        if args and callable(args[0]) and 'func' not in kwargs:
+            # Same positional-filter convenience as on() -- see its
+            # docstring for why this check is safe (chats are never
+            # callable).
+            kwargs = dict(kwargs, func=args[0])
+            args = args[1:]
+
         def decorator(func: Callable):
             for event_type in (events.NewMessage, events.MessageEdited):
                 handler = self._client.add_event_handler(func, event_type(*args, **kwargs))
@@ -756,10 +727,15 @@ class SplusClient:
         limit: int = None,
         filter_admins: bool = False
     ) -> List[Dict[str, Any]]:
-        """Get chat members with admin caching optimization."""
-        from ._base.tl import types
-        import time
+        """
+        Get chat members with admin caching optimization.
 
+        Raises errors.NotAdminError if the member list can't be seen
+        at all (e.g. a basic group where the account isn't allowed to
+        view participants) instead of silently returning an empty
+        list, so a genuine permissions problem doesn't look
+        indistinguishable from "this chat really has 0 members".
+        """
         # Admin cache for performance
         if not hasattr(self, '_admin_cache'):
             self._admin_cache = {}
@@ -767,6 +743,21 @@ class SplusClient:
 
         entity = await self._client.get_input_entity(_norm_chat_id(chat_id))
         chat_id_int = entity.chat_id if hasattr(entity, 'chat_id') else entity.channel_id
+
+        # For basic (non-super) groups specifically: iter_participants()
+        # silently yields zero results, with no exception, when the
+        # server returns ChatParticipantsForbidden instead of
+        # ChatParticipants for GetFullChatRequest -- which happens when
+        # this account isn't allowed to see the member list, even in
+        # small groups. Check for that case up front so it surfaces as
+        # a clear error instead of looking like "0 members".
+        if hasattr(entity, 'chat_id') and not hasattr(entity, 'channel_id'):
+            full = await self._client(functions.messages.GetFullChatRequest(entity.chat_id))
+            if not isinstance(full.full_chat.participants, types.ChatParticipants):
+                raise errors.NotAdminError(
+                    "Can't see this group's member list -- the account "
+                    "doesn't have permission to view participants here."
+                )
 
         if filter_admins:
             cache_key = str(chat_id_int)
@@ -783,6 +774,21 @@ class SplusClient:
                 ):
                     admin_ids.add(user.id)
                 self._admin_cache[cache_key] = {'ids': admin_ids, 'time': now}
+
+                # Sweep out other expired entries opportunistically
+                # (piggybacking on this cache-miss instead of a
+                # separate timer/task) so a long-running bot active in
+                # many chats doesn't grow this dict forever -- entries
+                # only ever got written above, never removed, so
+                # without this every chat this method was ever called
+                # for with filter_admins=True stayed in memory for the
+                # life of the process.
+                expired = [
+                    k for k, v in self._admin_cache.items()
+                    if (now - v['time']) >= self._admin_cache_ttl
+                ]
+                for k in expired:
+                    del self._admin_cache[k]
 
             # Get all members and filter
             all_members = []
@@ -997,9 +1003,31 @@ class SplusClient:
         self,
         chat_id: Union[int, str],
         user_id: Union[int, str],
-        permanent: bool = True
+        permanent: bool = True,
+        *,
+        duration_days: int = 30,
     ) -> bool:
-        """Ban/kick a member from chat."""
+        """
+        Ban/kick a member from a channel or supergroup (not a basic
+        group -- see errors.NotAdminError below).
+
+        Args:
+            chat_id: The channel/supergroup.
+            user_id: The user to ban.
+            permanent: If True (default), ban them indefinitely. If
+                False, ban them for `duration_days` instead.
+            duration_days: Only used when permanent=False. How many
+                days the ban should last. Must stay well under 366 --
+                per Telegram's own semantics, a duration of 366 days
+                or more is treated as a *permanent* ban, not temporary
+                (so passing something close to 366 here would silently
+                behave like permanent=True).
+
+        Raises errors.NotAdminError if this is a basic (non-super)
+        group -- banning individual members isn't supported there at
+        the protocol level; the group would need to be upgraded to a
+        supergroup first (see errors for details).
+        """
         try:
             entity = await self._client.get_input_entity(_norm_chat_id(chat_id))
             user = await self._client.get_input_entity(_norm_chat_id(user_id))
@@ -1007,18 +1035,39 @@ class SplusClient:
             from datetime import datetime, timedelta, timezone
             until_date = None
             if not permanent:
-                until_date = datetime.now(timezone.utc) + timedelta(days=366)
+                until_date = datetime.now(timezone.utc) + timedelta(days=min(duration_days, 365))
 
+            # NOTE: edit_permissions()'s view_messages means "is the
+            # user ALLOWED to view messages" (True = allowed, False =
+            # banned from it) -- the exact opposite sense of this
+            # method's own `permanent` flag ("ban them" = True). This
+            # used to pass view_messages=permanent directly, which
+            # with the default permanent=True sent view_messages=True
+            # ("let them view messages"), i.e. the request succeeded
+            # and returned True while applying no restriction at all.
+            # Banning always means view_messages=False regardless of
+            # `permanent` -- `permanent` only controls until_date
+            # (how long the ban lasts), not whether it happens.
             await self._client.edit_permissions(
                 entity, user,
-                view_messages=permanent,
+                view_messages=False,
                 until_date=until_date
             )
             return True
         except errors.SplusError:
             raise
+        except ValueError as e:
+            # edit_permissions() raises a plain ValueError (not one of
+            # our RPC-derived errors) for a basic (non-super) group,
+            # since banning individual members needs channel-level
+            # permissions that don't exist on basic groups.
+            raise errors.NotAdminError(
+                "Can't ban an individual member in a basic group -- "
+                "this needs a supergroup or channel."
+            ) from e
         except Exception as e:
             raise errors.translate(e) from e
+
 
     async def unban_member(self, chat_id: Union[int, str], user_id: Union[int, str]) -> bool:
         """Unban a member."""
@@ -1478,13 +1527,29 @@ class SplusClient:
         request_needed: bool = False,
     ) -> Optional[str]:
         """
-        Get (create a fresh) invite link for a group or channel. You
-        must have the "invite users" admin right in that chat.
+        Get an invite link for a group or channel. You must have the
+        "invite users" admin right in that chat.
+
+        If none of title/expire_date/usage_limit/request_needed are
+        given, this returns the chat's EXISTING invite link (read
+        straight off the chat's full info) instead of creating a new
+        one -- this matters because on some Soroush Plus setups the
+        request that creates a brand-new custom link
+        (`ExportChatInvite`) is rejected server-side with
+        NOT_SUPPORTED, while simply reading the link the chat already
+        has works fine. If you actually want a fresh custom link with
+        its own settings, pass any of those kwargs and this will
+        request one explicitly (which still hits that same
+        NOT_SUPPORTED wall on setups where it applies -- there's no
+        way around that from the client side, since it's the server
+        rejecting the request outright).
 
         Args:
             chat_id: The group/channel.
             title: Optional label for this link (shown in admin's
                 invite-link list, not to people who join with it).
+                Passing this (or any of the args below) forces
+                creating a new link instead of reusing the existing one.
             expire_date: Optional datetime/timestamp after which the
                 link stops working.
             usage_limit: Optional max number of people who can join
@@ -1494,22 +1559,65 @@ class SplusClient:
 
         Returns:
             The invite link URL (e.g. "https://splus.ir/joinchat/...")
-            or None on failure.
+            or None if there's no link available (no existing link and
+            creating one isn't supported here, or on failure).
         """
+        wants_custom_link = any(
+            v not in (None, False) for v in (title, expire_date, usage_limit, request_needed)
+        )
         try:
             entity = await self._client.get_input_entity(_norm_chat_id(chat_id))
-            result = await self._client(functions.messages.ExportChatInviteRequest(
-                peer=entity,
-                title=title,
-                expire_date=expire_date,
-                usage_limit=usage_limit,
-                request_needed=request_needed or None,
-            ))
+
+            if not wants_custom_link:
+                # Read the chat's existing link first -- no new
+                # request/permission needed beyond what get_chat_info
+                # already needs, and it sidesteps ExportChatInvite
+                # being unsupported on some setups.
+                existing = await self._get_existing_invite_link(entity)
+                if existing is not None:
+                    return existing
+
+            try:
+                result = await self._client(functions.messages.ExportChatInviteRequest(
+                    peer=entity,
+                    title=title,
+                    expire_date=expire_date,
+                    usage_limit=usage_limit,
+                    request_needed=request_needed or None,
+                ))
+            except splus_errors.RPCError as e:
+                if e.message == 'NOT_SUPPORTED':
+                    return None
+                raise
             return getattr(result, 'link', None)
         except errors.SplusError:
             raise
         except Exception as e:
             raise errors.translate(e) from e
+
+    async def _get_existing_invite_link(self, entity) -> Optional[str]:
+        """
+        Read a chat's current invite link straight off its full info,
+        without creating a new one. Returns None if there isn't one
+        yet or it can't be read (e.g. no permission).
+        """
+        try:
+            if isinstance(entity, (types.InputPeerChannel, types.InputChannel)):
+                result = await self._client(functions.channels.GetFullChannelRequest(channel=entity))
+            elif isinstance(entity, (types.InputPeerChat,)):
+                result = await self._client(functions.messages.GetFullChatRequest(chat_id=entity.chat_id))
+            else:
+                resolved = await self._client.get_entity(entity)
+                if isinstance(resolved, types.Channel):
+                    result = await self._client(functions.channels.GetFullChannelRequest(channel=resolved))
+                elif isinstance(resolved, types.Chat):
+                    result = await self._client(functions.messages.GetFullChatRequest(chat_id=resolved.id))
+                else:
+                    return None
+            invite = getattr(result.full_chat, 'exported_invite', None)
+            return getattr(invite, 'link', None)
+        except Exception:
+            return None
 
     def _invite_to_dict(self, invite) -> Dict[str, Any]:
         """Convert a ChatInviteExported to dict."""
@@ -1590,33 +1698,66 @@ class SplusClient:
             chat_id: The group/channel.
             link: The exact invite link string to edit (from
                 `get_chat_invite_links`).
-            revoke: If True, revokes (deactivates) this link. Once
-                revoked, a link can only be deleted, not re-activated.
+            revoke: If True, revokes (deactivates) this link.
+
+                For a link with custom settings (title/expiry/usage
+                limit/request_needed), revoking just deactivates it --
+                the returned dict is that now-revoked link, and once
+                revoked a link can only be deleted, not re-activated.
+
+                For the group's *permanent* link (e.g.
+                "https://splus.ir/joingroup/AWhEa1RO..." with no
+                custom settings -- what get_chat_invite_link() returns
+                by default), Soroush Plus/Telegram automatically
+                generates a brand-new replacement permanent link right
+                away when you revoke it, and THAT is what this method
+                returns in that case -- so `revoke=True` on the
+                permanent link is really "give me a new group link".
+                See `regenerate_chat_invite_link()` for a shortcut that
+                makes exactly this intent explicit.
             title, expire_date, usage_limit, request_needed: New
                 values for these settings; leave as None to keep the
                 current value unchanged.
 
         Returns:
-            The updated invite-link dict, or None on failure.
+            The updated (or, for the permanent link case above, newly
+            generated) invite-link dict. Returns None if there's
+            nothing to return (failure), OR if Soroush Plus rejects
+            this request entirely with a server-side NOT_SUPPORTED
+            error -- some Soroush Plus setups don't support editing/
+            revoking invite links via this request at all, regardless
+            of the link or chat. When that happens there's nothing the
+            caller can do differently to make it work, so it's treated
+            the same as "no result" rather than raising.
 
         Example:
-            # revoke a link
+            # revoke a custom link (deactivates it, nothing more)
             await bot.edit_chat_invite_link(chat_id, link, revoke=True)
 
-            # change its title
+            # "reset" the group's permanent link -- this actually
+            # returns the NEW link, not the old one
+            new_link_info = await bot.edit_chat_invite_link(chat_id, main_link, revoke=True)
+            print(new_link_info["link"])
+
+            # change a link's title
             await bot.edit_chat_invite_link(chat_id, link, title="New name")
         """
         try:
             peer = await self._client.get_input_entity(_norm_chat_id(chat_id))
-            result = await self._client(functions.messages.EditExportedChatInviteRequest(
-                peer=peer,
-                link=link,
-                revoked=revoke or None,
-                expire_date=expire_date,
-                usage_limit=usage_limit,
-                request_needed=request_needed,
-                title=title,
-            ))
+            try:
+                result = await self._client(functions.messages.EditExportedChatInviteRequest(
+                    peer=peer,
+                    link=link,
+                    revoked=revoke or None,
+                    expire_date=expire_date,
+                    usage_limit=usage_limit,
+                    request_needed=request_needed,
+                    title=title,
+                ))
+            except splus_errors.RPCError as e:
+                if e.message == 'NOT_SUPPORTED':
+                    return None
+                raise
             new_invite = getattr(result, 'new_invite', None) or getattr(result, 'invite', None)
             if isinstance(new_invite, types.ChatInviteExported):
                 return self._invite_to_dict(new_invite)
@@ -1648,6 +1789,44 @@ class SplusClient:
             raise
         except Exception as e:
             raise errors.translate(e) from e
+
+    async def regenerate_chat_invite_link(
+        self, chat_id: Union[int, str], old_link: str,
+    ) -> Optional[str]:
+        """
+        Replace a group/channel's invite link with a brand new one --
+        e.g. the group's main/permanent link like
+        "https://splus.ir/joingroup/AWhEa1RO8tsMlYoT8yJRcQ", the kind
+        you'd get from get_chat_invite_link() with no custom settings
+        (no title/expiry/usage_limit/request_needed).
+
+        This is what "reset the group link" means server-side: for a
+        permanent link, revoking it makes the server generate a fresh
+        replacement in the same response, rather than just leaving you
+        with nothing. This method does exactly that and hands back the
+        new link directly, instead of you having to call
+        edit_chat_invite_link(..., revoke=True) yourself and dig the
+        new link out of its return value.
+
+        Args:
+            chat_id: The group/channel.
+            old_link: The exact current invite link string to replace
+                (from get_chat_invite_link()/get_chat_invite_links()).
+
+        Returns:
+            The new link string, or None on failure -- including if
+            Soroush Plus rejects the underlying edit/revoke request
+            with NOT_SUPPORTED, which some setups do regardless of
+            the link or chat (see edit_chat_invite_link's docstring).
+            If you're hitting that, there currently isn't a working
+            way to change/reset the chat's link on this server.
+
+        Example:
+            new_link = await bot.regenerate_chat_invite_link(chat_id, old_link)
+        """
+        result = await self.edit_chat_invite_link(chat_id, old_link, revoke=True)
+        return result.get("link") if result else None
+
 
     async def check_chat_username(self, chat_id: Union[int, str], username: str) -> bool:
         """
@@ -2442,8 +2621,6 @@ class SplusClient:
         Returns:
             Dict with call info if successful, None otherwise.
         """
-        from ._base import errors as splus_errors
-
         # Extract slug from meet_link if provided
         if meet_link and not slug:
             if 'https://splus.ir/meet/' in meet_link:
@@ -2531,7 +2708,6 @@ class SplusClient:
                 wait_seconds = e.seconds
                 print(f"FloodWaitError: waiting {wait_seconds} seconds (attempt {attempt + 1}/{max_retries})")
                 if attempt < max_retries - 1:
-                    import asyncio
                     await asyncio.sleep(wait_seconds)
                 else:
                     raise errors.FloodWaitError(wait_seconds, original=e) from e
