@@ -1,559 +1,204 @@
-# 📚 BotClient - Python Library for Soroush Plus Bot API
+# SplusLib
 
-<div align="center">
+High-level, async Python library for **Soroush Plus**. Two independent clients, pick whichever fits:
 
-![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![Status](https://img.shields.io/badge/status-stable-brightgreen.svg)
+- **`SplusClient`** — an MTProto *userbot* client (logs in as a real account, phone number + login code, can do anything a person can do in the app: messages, files, stories, groups, calls, ...).
+- **`BotClient`** — a client for the official **HTTP Bot API** (`api.splus.ir`), which is a near-exact clone of the Telegram Bot API. Logs in with a bot token from `splus.ir/fatherbot`, no phone number involved.
 
-**یک کتابخانه قدرتمند، کامل و آسان‌برای استفاده از API بات سروش‌پلاس**
-
-[English](README.md) | [فارسی](README.fa.md)
-
-</div>
-
----
-
-## 👨‍💻 توسعه‌دهنده
-
-**سازنده:** Erfan Mirdehghan (عرفان میردهقان)
-
----
-
-## ✨ ویژگی‌ها
-
-- ✅ **پشتیبانی کامل از API بات سروش‌پلاس** - تمام متدهای رسمی API
-- ✅ **Async/Await** - کاملاً غیرهمزمان با `aiohttp`
-- ✅ **ارسال فایل** - پشتیبانی از آپلود فایل‌های محلی، URL و bytes
-- ✅ **دریافت فایل** - دانلود فایل‌ها با `file_id`
-- ✅ **کیبوردهای اینلاین و پاسخ** - ساخت آسان کیبوردهای تعاملی
-- ✅ **نظرسنجی (Poll)** - ارسال و مدیریت نظرسنجی‌ها
-- ✅ **مدیریت گروه** - بن، آنبن، محدودیت، ترفیع و...
-- ✅ **وب‌هوک (Webhook)** - پشتیبانی از دریافت به‌روزرسانی‌ها از طریق Webhook
-- ✅ **پولینگ (Polling)** - دریافت به‌روزرسانی‌ها با Long Polling
-- ✅ **پیشرفت آپلود** - نمایش نوار پیشرفت برای آپلود فایل‌ها
-- ✅ **مدیریت خطا** - مدیریت خودکار خطاها و محدودیت سرعت
-- ✅ **دیباگ** - نمایش درخواست‌ها برای رفع اشکال
-
----
-
-## 📦 نصب
+They're fully independent to use, but ship together — one `pip install spluslib` gets both `SplusClient` and `BotClient` working, no extras required:
 
 ```bash
-pip install spluslib
-```
-
-یا اگر می‌خواهید از آخرین نسخه استفاده کنید:
-
-```bash
-pip install git+https://github.com/yourusername/spluslib.git
-```
-
-### پیش‌نیازها
-
-```bash
-pip install aiohttp
+pip install spluslib                    # everything: SplusClient + BotClient
+pip install spluslib[all]               # + SOCKS proxy support + conference calls (rarely needed)
 ```
 
 ---
 
-## 🚀 شروع سریع
-
-### ۱. دریافت توکن بات
-
-ابتدا در پیام‌رسان سروش‌پلاس به ربات `@soroush_plus_bot` پیام دهید و یک بات جدید بسازید. توکن خود را کپی کنید.
-
-### ۲. کد اولیه
+## BotClient (official HTTP Bot API)
 
 ```python
 import asyncio
-from spluslib.bot_client import BotClient
+from spluslib import BotClient
 
-# ایجاد نمونه بات
-bot = BotClient("YOUR_BOT_TOKEN_HERE")
-
-# تعریف یک هندلر برای پیام‌ها
-@bot.on_message()
-async def echo(message):
-    if "text" in message:
-        await bot.send_message(
-            message["chat"]["id"],
-            f"شما گفتید: {message['text']}"
-        )
-
-# اجرای بات
-async def main():
-    await bot.run_polling()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
----
-
-## 📖 راهنمای کامل
-
-### ایجاد نمونه بات
-
-```python
-from spluslib.bot_client import BotClient
-
-# حالت عادی
-bot = BotClient("TOKEN")
-
-# با دیباگ فعال
-bot = BotClient("TOKEN", debug=True)
-
-# با تنظیمات سفارشی
-bot = BotClient(
-    "TOKEN",
-    base_url="https://api.splus.ir",  # URL پیش‌فرض
-    request_timeout=120.0,             # تایم‌اوت ۱۲۰ ثانیه
-    debug=True
-)
-```
-
-### ارسال پیام
-
-```python
-# ارسال پیام ساده
-await bot.send_message(chat_id, "سلام!")
-
-# ارسال پیام با قالب‌بندی HTML
-await bot.send_message(
-    chat_id,
-    "<b>سلام</b> <i>دنیا!</i>",
-    parse_mode="HTML"
-)
-
-# ارسال پیام با قالب‌بندی MarkdownV2
-from spluslib.bot_client import escape_markdown
-
-text = escape_markdown("سلام! *دنیا*")
-await bot.send_message(
-    chat_id,
-    text,
-    parse_mode="MarkdownV2"
-)
-
-# ارسال پیام با کیبورد
-keyboard = bot.inline_keyboard([
-    [{"text": "✅ بله", "callback_data": "yes"}]
-])
-await bot.send_message(
-    chat_id,
-    "یک گزینه انتخاب کنید:",
-    reply_markup=keyboard
-)
-```
-
-### دریافت پیام‌ها
-
-#### روش ۱: Polling (پیش‌فرض)
-
-```python
-@bot.on_message()
-async def handler(message):
-    chat_id = message["chat"]["id"]
-    text = message.get("text")
-    
-    if text == "/start":
-        await bot.send_message(chat_id, "سلام! به بات خوش آمدید.")
-    elif text == "/help":
-        await bot.send_message(chat_id, "دستورات موجود: /start, /help")
-
-await bot.run_polling()
-```
-
-#### روش ۲: Webhook
-
-```python
-# راه‌اندازی Webhook
-await bot.run_webhook(
-    "https://your-domain.com/webhook",
-    port=8443,
-    secret_token="your-secret-token"
-)
-```
-
-### ارسال فایل‌ها
-
-```python
-# ارسال عکس
-await bot.send_photo(chat_id, "photo.jpg")
-await bot.send_photo(chat_id, "https://example.com/image.jpg")
-await bot.send_photo(chat_id, image_bytes)
-
-# ارسال فایل صوتی (Voice)
-await bot.send_voice(chat_id, "voice.ogg")
-
-# ارسال فایل صوتی (Audio) با متادیتا
-await bot.send_audio(
-    chat_id,
-    "song.mp3",
-    title="آهنگ زیبا",
-    performer="خواننده",
-    duration=180
-)
-
-# ارسال فایل معمولی
-await bot.send_document(chat_id, "document.pdf")
-
-# ارسال ویدیو
-await bot.send_video(
-    chat_id,
-    "video.mp4",
-    caption="ویدیوی تست",
-    supports_streaming=True
-)
-```
-
-### کیبوردهای تعاملی
-
-#### کیبورد اینلاین (Inline Keyboard)
-
-```python
-keyboard = bot.inline_keyboard([
-    [
-        {"text": "✅ بله", "callback_data": "yes"},
-        {"text": "❌ خیر", "callback_data": "no"}
-    ],
-    [
-        {"text": "🔗 لینک", "url": "https://example.com"}
-    ]
-])
-
-await bot.send_message(chat_id, "انتخاب کنید:", reply_markup=keyboard)
-
-# هندلر کلیک
-@bot.on_callback_query()
-async def on_callback(query):
-    if query.data == "yes":
-        await query.answer("✅ انتخاب شد!")
-    elif query.data == "no":
-        await query.answer("❌ رد شد!")
-```
-
-#### کیبورد پاسخ (Reply Keyboard)
-
-```python
-keyboard = bot.reply_keyboard([
-    ["گزینه ۱", "گزینه ۲"],
-    ["گزینه ۳"]
-])
-
-await bot.send_message(
-    chat_id,
-    "یک گزینه انتخاب کنید:",
-    reply_markup=keyboard
-)
-
-# حذف کیبورد
-await bot.send_message(
-    chat_id,
-    "کیبورد حذف شد",
-    reply_markup=bot.remove_keyboard()
-)
-```
-
-### نظرسنجی (Poll)
-
-```python
-# نظرسنجی عادی
-await bot.send_poll(
-    chat_id,
-    "بهترین زبان برنامه‌نویسی؟",
-    ["Python", "JavaScript", "Go", "Rust"]
-)
-
-# آزمون (Quiz)
-await bot.send_poll(
-    chat_id,
-    "۲ + ۲ = ؟",
-    ["۳", "۴", "۵"],
-    type="quiz",
-    correct_option_id=1,
-    explanation="جواب درست ۴ است!"
-)
-```
-
-### دریافت فایل
-
-```python
-# دریافت اطلاعات فایل
-file_info = await bot.get_file(file_id)
-
-# دانلود فایل به صورت bytes
-file_bytes = await bot.download_file(file_id)
-
-# ذخیره فایل روی دیسک
-file_path = await bot.download_file(file_id, "downloaded.jpg")
-
-# دریافت فایل از پیام
-@bot.on_message()
-async def on_file(message):
-    if "photo" in message or "document" in message:
-        file_data = await message.get_file_and_download()
-        if file_data:
-            await message.reply("فایل دریافت شد!")
-```
-
-### مدیریت گروه
-
-```python
-# بن کردن کاربر
-await bot.ban_chat_member(group_id, user_id)
-
-# آنبن کردن
-await bot.unban_chat_member(group_id, user_id)
-
-# محدود کردن (مثلاً بی‌صدا کردن)
-await bot.restrict_chat_member(
-    group_id,
-    user_id,
-    {"can_send_messages": False}
-)
-
-# ترفیع به ادمین
-await bot.promote_chat_member(
-    group_id,
-    user_id,
-    can_delete_messages=True,
-    can_invite_users=True
-)
-
-# دریافت لیست ادمین‌ها
-admins = await bot.get_chat_administrators(group_id)
-
-# تعداد اعضا
-count = await bot.get_chat_member_count(group_id)
-```
-
-### لینک‌های دعوت
-
-```python
-# ایجاد لینک دعوت
-invite = await bot.create_chat_invite_link(
-    group_id,
-    name="لینک ویژه",
-    member_limit=10,
-    expire_date=int(time.time()) + 86400  # ۱ روز
-)
-
-# ویرایش لینک
-await bot.edit_chat_invite_link(
-    group_id,
-    invite["invite_link"],
-    member_limit=20
-)
-
-# لغو لینک
-await bot.revoke_chat_invite_link(group_id, invite["invite_link"])
-```
-
-### دستورات بات
-
-```python
-# تنظیم دستورات
-await bot.set_my_commands([
-    {"command": "start", "description": "شروع"},
-    {"command": "help", "description": "راهنما"},
-    {"command": "about", "description": "درباره بات"}
-])
-
-# دریافت دستورات
-commands = await bot.get_my_commands()
-```
-
-### مدیریت خطا
-
-```python
-try:
-    await bot.send_message(chat_id, "سلام!")
-except FloodWaitError as e:
-    print(f"لطفاً {e.seconds} ثانیه صبر کنید")
-except BotAPIError as e:
-    print(f"خطای API: {e}")
-```
-
----
-
-## 📘 راهنمای قالب‌بندی
-
-### HTML
-
-```python
-text = """
-<b>پررنگ</b>
-<i>ایتالیک</i>
-<u>زیرخط</u>
-<s>خط خورده</s>
-<a href="https://example.com">لینک</a>
-<code>کد درون‌خطی</code>
-<pre>بلوک کد</pre>
-<pre><code class="language-python">print("سلام!")</code></pre>
-<blockquote>نقل قول</blockquote>
-<blockquote expandable>نقل قول بازشونده</blockquote>
-"""
-
-await bot.send_message(chat_id, text, parse_mode="HTML")
-```
-
-### MarkdownV2
-
-```python
-from spluslib.bot_client import escape_markdown
-
-text = escape_markdown("""
-*پررنگ*
-_ایتالیک_
-__زیرخط__
-~خط خورده~
-||اسپویلر||
-[لینک](https://example.com)
-`کد درون‌خطی`
-```
-بلوک کد
-```
-```python
-print("سلام!")
-```
-> نقل قول
-> ادامه نقل قول
-""")
-
-await bot.send_message(chat_id, text, parse_mode="MarkdownV2")
-```
-
----
-
-## 🔧 مثال‌های پیشرفته
-
-### ۱. ربات Echo با کیبورد اینلاین
-
-```python
-import asyncio
-from spluslib.bot_client import BotClient
-
-bot = BotClient("YOUR_TOKEN")
+bot = BotClient("123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")  # from splus.ir/fatherbot
 
 @bot.on_message(lambda m: m.get("text") == "/start")
-async def start(message):
-    keyboard = bot.inline_keyboard([
-        [{"text": "📝 Echo", "callback_data": "echo"}],
-        [{"text": "📊 Status", "callback_data": "status"}]
-    ])
-    await message.reply(
-        "به ربات Echo خوش آمدید!",
-        reply_markup=keyboard
-    )
+async def start(msg):
+    await msg.reply("Hello! I'm alive.")
 
 @bot.on_callback_query()
-async def callback(query):
-    await query.answer()
-    
-    if query.data == "echo":
-        await bot.send_message(
-            query.chat_id,
-            "یک پیام بفرستید تا Echo کنم..."
-        )
-    elif query.data == "status":
-        await bot.send_message(
-            query.chat_id,
-            "✅ ربات فعال است!"
-        )
-
-@bot.on_message(lambda m: m.get("text") and not m.get("text").startswith("/"))
-async def echo(message):
-    await message.reply(f"🔊 {message.text}")
+async def on_click(query):
+    await query.answer(text="Got it!")
+    await bot.send_message(query.chat_id, f"You picked: {query.data}")
 
 async def main():
     await bot.run_polling()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
 
-### ۲. ربات مدیریت گروه
+### Two ways to call any method
+
+1. **Exact official method name** — every single Bot API method works this way, even ones with no explicit wrapper below, since Soroush's Bot API mirrors Telegram's method-for-method:
+
+   ```python
+   await bot.sendDice(chat_id=chat_id, emoji="🎯")
+   await bot.getMe()
+   ```
+
+2. **Pythonic snake_case wrappers** for the common ones — accept local file paths, URLs, or raw bytes directly, with console progress bars for uploads:
+
+   ```python
+   await bot.send_photo(chat_id, "photo.jpg")
+   await bot.send_voice(chat_id, "voice.mp3")
+   await bot.send_document(chat_id, "report.pdf", caption="Here you go")
+   ```
+
+Both hit the same HTTP endpoint — use whichever reads better.
+
+### Messages you receive
+
+Handlers receive `BotMessage`/`BotCallbackQuery` — real `dict` subclasses (so `msg["text"]`, `"photo" in msg`, `json.dumps(msg)` all still work exactly like the raw API), with convenience on top:
 
 ```python
-from spluslib.bot_client import BotClient
-
-bot = BotClient("YOUR_TOKEN")
-
-@bot.on_message(lambda m: m.get("text") == "/ban")
-async def ban_user(message):
-    if "reply_to_message" in message:
-        user_id = message["reply_to_message"]["from"]["id"]
-        await bot.ban_chat_member(message.chat_id, user_id)
-        await message.reply(f"🚫 کاربر بن شد!")
-    else:
-        await message.reply("❌ روی پیام کاربر ریپلای کنید!")
-
-@bot.on_message(lambda m: m.get("text") == "/mute")
-async def mute_user(message):
-    if "reply_to_message" in message:
-        user_id = message["reply_to_message"]["from"]["id"]
-        await bot.restrict_chat_member(
-            message.chat_id,
-            user_id,
-            {"can_send_messages": False}
-        )
-        await message.reply("🔇 کاربر بی‌صدا شد!")
-    else:
-        await message.reply("❌ روی پیام کاربر ریپلای کنید!")
+@bot.on_message()
+async def handler(msg):
+    print(msg.text, msg.chat_id, msg.sender_id)
+    await msg.reply("got it")                    # sendMessage to this chat, replying to msg
+    await msg.reply_photo("photo.jpg")            # sendPhoto, same deal
+    file_path = await msg.get_file_and_download()  # downloads whatever file is attached, if any
 ```
 
----
-
-## 🐛 رفع اشکال
-
-### فعال‌سازی دیباگ
+For explicit type annotations (so your editor autocompletes even without inference from the decorator), both are importable from the top level:
 
 ```python
-bot = BotClient("TOKEN", debug=True)
+from spluslib import BotClient, BotMessage, BotCallbackQuery
+
+bot = BotClient(token)
+
+@bot.on_message()
+async def handler(msg: BotMessage):
+    await msg.reply("test")
+
+@bot.on_callback_query()
+async def on_click(query: BotCallbackQuery):
+    await query.answer()
 ```
 
-### مدیریت خطا در Polling
+### Keyboards
 
 ```python
-async def error_handler(error):
-    print(f"❌ خطا: {error}")
+from spluslib import inline_keyboard, reply_keyboard, remove_keyboard, force_reply
+# or equivalently: bot.inline_keyboard(...), bot.reply_keyboard(...), etc.
 
-await bot.run_polling(on_error=error_handler)
+kb = inline_keyboard([
+    [{"text": "Yes", "callback_data": "yes"}, {"text": "No", "callback_data": "no"}],
+    [{"text": "Visit site", "url": "https://example.com"}],
+])
+await bot.send_message(chat_id, "Pick one:", reply_markup=kb)
+
+kb = reply_keyboard([["Option A", "Option B"], ["Cancel"]])
+await bot.send_message(chat_id, "Choose:", reply_markup=kb)
+
+await bot.send_message(chat_id, "Keyboard removed", reply_markup=remove_keyboard())
 ```
 
-### خطاهای رایج
+### Polls
 
-| خطا | راه‌حل |
-|-----|--------|
-| `Bad Request: NOT_SUPPORTED` | فرمت فایل پشتیبانی نمی‌شود. از `send_document` استفاده کنید |
-| `query is too old` | سریع‌تر به `callback_query` پاسخ دهید |
-| `FloodWaitError` | صبر کنید و دوباره تلاش کنید |
-| `Bad Request: can't parse entities` | کاراکترهای خاص را با `escape_markdown` Escape کنید |
+```python
+await bot.send_poll(chat_id, "Best pizza topping?", ["Pepperoni", "Mushroom", "Pineapple"])
+
+await bot.send_poll(chat_id, "2 + 2 = ?", ["3", "4", "5"],
+                     type="quiz", correct_option_id=1, explanation="Basic arithmetic!")
+
+await bot.stop_poll(chat_id, message_id)
+```
+
+### Files
+
+```python
+await bot.send_photo(chat_id, "local.jpg")               # local path -- uploaded, streamed from disk
+await bot.send_photo(chat_id, "https://example.com/x.jpg")  # URL -- Soroush fetches it directly
+await bot.send_photo(chat_id, "AgACAgIAAx...")            # existing file_id -- instant, no upload
+await bot.send_photo(chat_id, raw_bytes)                  # raw bytes also accepted
+
+file_info = await bot.get_file(file_id)
+data = await bot.download_file(file_id)                   # bytes
+path = await bot.download_file(file_id, "saved.jpg")      # or save straight to a path
+```
+
+`send_photo`, `send_audio`, `send_document`, `send_video`, `send_animation`, `send_voice`, `send_video_note`, `send_sticker`, `send_media_group` all follow this same pattern.
+
+### Chat & member management
+
+```python
+await bot.ban_chat_member(chat_id, user_id)
+await bot.unban_chat_member(chat_id, user_id)
+await bot.restrict_chat_member(chat_id, user_id, {"can_send_messages": False})
+await bot.promote_chat_member(chat_id, user_id, can_delete_messages=True)
+await bot.set_chat_title(chat_id, "New title")
+await bot.get_chat_administrators(chat_id)
+await bot.get_chat_member(chat_id, user_id)
+
+link = await bot.create_chat_invite_link(chat_id, name="Marketing")
+await bot.approve_chat_join_request(chat_id, user_id)
+```
+
+### Long polling vs. webhook
+
+```python
+# Long polling (default, simplest -- works anywhere, no public URL needed)
+await bot.run_polling()
+
+# Webhook (Soroush pushes updates to you instead) -- starts a built-in
+# HTTP server, registers it with setWebhook(), and prints the result:
+await bot.run_webhook("https://your-domain.com/bot", port=8443)
+```
+
+`run_webhook` binds a local HTTP server (`host=`/`port=`) and tells Soroush to POST updates to your public `url` — put a reverse proxy (nginx, Caddy, ...) in front if your public port differs from the one you bind to. Pass `secret_token=` to reject spoofed requests. Call `await bot.stop_webhook()` to unregister and stop.
+
+### Debugging opaque errors
+
+If a call fails with a terse error, turn on `debug=True` to see the exact outgoing request and full raw response:
+
+```python
+bot = BotClient(token, debug=True)
+```
 
 ---
 
-## 📚 مراجع
+## SplusClient (MTProto userbot)
 
-- [مستندات رسمی API بات سروش‌پلاس](https://soroushplus.com/p/documents/bot-platform)
-- [دریافت توکن بات](https://splus.ir/botfather)
-- [گیت‌هاب پروژه](https://github.com/yourusername/spluslib)
+```python
+import asyncio
+from spluslib import SplusClient
+
+client = SplusClient("my_session")
+
+@client.on_message()
+async def handler(event):
+    await event.reply("Hello!")
+
+async def main():
+    await client.start("+989123456789")
+    await client.run_until_disconnected()
+
+asyncio.run(main())
+```
+
+Covers messaging (send/edit/delete/forward/pin/react), rich text formatting (Markdown/HTML, including underline/spoiler/blockquote), mentions, polls, reporting, files/photos/video/voice/audio, stories, account and group management, invite links, contacts, and conference calls. Event decorators mirror `BotClient`'s style: `on_message`, `on_edited`, `on_update` (both new and edited), `on_deleted`, `on_read`, `on_reaction`, `on_chat_action`, `on_user_update`, `on_callback`, `on_inline`, `on_album`, `on_raw`.
+
+Editor autocomplete (`event.reply`, `msg.sender_id`, etc.) is fully typed via bundled `.pyi` stubs — works out of the box in VS Code/Pylance and similar.
 
 ---
----
 
-## 📄 مجوز
+## Requirements
 
-این پروژه تحت مجوز **MIT** منتشر شده است. برای اطلاعات بیشتر فایل [LICENSE](LICENSE) را ببینید.
+- Python 3.8+
+- `aiohttp`, `pyaes`, `rsa` — all installed automatically with `pip install spluslib`, no extras needed for either client
+- `PySocks` (only if you need SOCKS proxy support with `SplusClient`) — `pip install spluslib[socks]`
+- `livekit` (only for `SplusClient`'s `CallAudioSession`, joining conference calls) — `pip install spluslib[calls]`
 
----
+## License
 
-<div align="center">
-
-**ساخته شده با ❤️ توسط Erfan Mirdehghan**
-
-[![GitHub](https://img.shields.io/badge/GitHub-ErfanMirdehghan-181717?style=for-the-badge&logo=github)](https://github.com/ErfanMirdehghan)
-[![Telegram](https://img.shields.io/badge/Telegram-@ErfanMirdehghan-2CA5E0?style=for-the-badge&logo=telegram)](https://t.me/ErfanMirdehghan)
-
-</div>
+MIT
